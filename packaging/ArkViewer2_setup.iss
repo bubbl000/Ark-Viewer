@@ -45,6 +45,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："; Flags: unchecked
 Name: "registerthumb"; Description: "注册缩略图插件（资源管理器预览 RAW/PSD/HEIF 等）"; GroupDescription: "附加任务："; Flags: checkablealone
+Name: "registerassoc"; Description: "注册文件关联（双击 JPG/PNG/PSD/RAW 等图片用本软件打开）"; GroupDescription: "附加任务："; Flags: checkablealone
 
 [Files]
 ; 主程序
@@ -73,12 +74,16 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 ; 安装后注册缩略图插件（勾选任务时）
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\ArkThumbProvider.dll"""; StatusMsg: "正在注册缩略图插件..."; Flags: runhidden; Tasks: registerthumb
+; 安装后注册文件关联（勾选任务时）——静默注册全部支持格式后退出
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--assoc"; StatusMsg: "正在注册文件关联..."; Flags: runhidden; Tasks: registerassoc
 ; 安装后启动
 Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 ; 卸载时注销缩略图插件（/u 反注册，干干净净）
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s /u ""{app}\ArkThumbProvider.dll"""; Flags: runhidden; RunOnceId: "unregthumb"
+; 卸载时取消文件关联（静默反注册全部格式后退出）
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--unassoc"; Flags: runhidden; RunOnceId: "unregassoc"
 
 [UninstallDelete]
 ; 删除配置/日志目录（%LOCALAPPDATA%\ArkViewer2）

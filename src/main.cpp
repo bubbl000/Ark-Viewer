@@ -104,16 +104,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int cmdShow) {
     // ── 静默注册文件关联（安装包调用：ArkViewer2.exe --assoc）──
     // 复用 FileAssoc::Associate（SetAppAsDefault 系统 API，自动处理 UserChoice hash），
     // 注册完成后立即退出，不创建窗口。安装/卸载场景专用。
-    if (cmdPath == L"--assoc") {
+    // 格式列表以 SupportedExtensions()（DecoderFactory）为唯一权威，与设置面板一致。
+    if (cmdPath == L"--assoc" || cmdPath == L"--unassoc") {
         // 仅当没有实例在运行时才注册（避免与运行中实例抢注册表）；已运行则交给已有实例处理
         if (!alreadyRunning) {
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-            static const wchar_t* kAssocExts[] = {
-                L".jpg", L".jpeg", L".png", L".webp", L".bmp", L".gif",
-                L".tif", L".tiff", L".svg", L".heic", L".heif",
-                L".cr2", L".cr3", L".nef", L".arw", L".dng", L".psd", L".hdr"
-            };
-            for (auto* ext : kAssocExts) FileAssoc::Associate(ext);
+            bool doAssoc = (cmdPath == L"--assoc");
+            for (const auto& ext : SupportedExtensions()) {
+                std::wstring dot = L"." + std::wstring(ext.begin(), ext.end());
+                if (doAssoc) FileAssoc::Associate(dot);
+                else         FileAssoc::Unassociate(dot);
+            }
             CoUninitialize();
         }
         OleUninitialize();
@@ -130,20 +131,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int cmdShow) {
     // 首实例：注册解码器 + 创建主窗口 + 消息循环
     RegisterAllDecoders();
     Config::Instance().Load();  // 加载配置（失败用默认值，不阻塞启动）
-
-    // ── 自动文件关联（仅首次启动或未关联时）──
-    // 在交互式桌面会话调用 SetAppAsDefault（用户手动启动软件时桌面上下文完整，成功率高）。
-    // 已关联则跳过（避免每次启动都写注册表）；OpenWithProgids 兜底保证"打开方式"列表始终有本程序。
-    if (!FileAssoc::IsAssociated(L".jpg")) {
-        CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        static const wchar_t* kAutoExts[] = {
-            L".jpg", L".jpeg", L".png", L".webp", L".bmp", L".gif",
-            L".tif", L".tiff", L".svg", L".heic", L".heif",
-            L".cr2", L".cr3", L".nef", L".arw", L".dng", L".psd", L".hdr"
-        };
-        for (auto* ext : kAutoExts) FileAssoc::Associate(ext);
-        CoUninitialize();
-    }
 
     ActivityLog::Instance().Init(GetModuleHandleW(nullptr));
     ActivityLog::SetThreadName("UI");  // 主线程角色名（供性能遥测 JSONL thread_name 字段）
