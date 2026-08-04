@@ -23,6 +23,10 @@ resolve_offset.ps1
 *.tmp
 test_thumb.cs
 
+# ── 内部文档（不公开）──
+adobe官方指导参考.md
+启动.md
+
 # ── 编辑器/工具 ──
 .trae/
 .vscode/
