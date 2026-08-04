@@ -1,6 +1,8 @@
 # ── 构建产物 ──
 build/
 build_ninja/
+build_release/
+release_pkg/
 outputs/
 __pycache__/
 *.pyc

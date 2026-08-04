@@ -27,13 +27,31 @@ static void SetRegSz(HKEY root, const wchar_t* subkey, const wchar_t* value,
 
 void EnsureProgId() {
     std::wstring exe = ExePath();
-    SetRegSz(HKEY_CURRENT_USER, PROG_ID, nullptr, L"Ark Viewer 2 Image");
+    // 注意：HKCU 的类注册根是 Software\Classes，直接写 PROG_ID 会落到 HKCU\ArkViewer2.Image（错误位置）
+    std::wstring base = std::wstring(L"Software\\Classes\\") + PROG_ID;
+    SetRegSz(HKEY_CURRENT_USER, base.c_str(), nullptr, L"Ark Viewer 2 Image");
     SetRegSz(HKEY_CURRENT_USER,
-             (std::wstring(PROG_ID) + L"\\DefaultIcon").c_str(),
+             (base + L"\\DefaultIcon").c_str(),
              nullptr, exe + L",0");
     SetRegSz(HKEY_CURRENT_USER,
-             (std::wstring(PROG_ID) + L"\\shell\\open\\command").c_str(),
+             (base + L"\\shell\\open\\command").c_str(),
              nullptr, L"\"" + exe + L"\" \"%1\"");
+
+    // Capabilities 注册（SetAppAsDefault 的硬性前提）：
+    // HKCU\Software\RegisteredApplications 值 "Ark Viewer 2" → Software\Classes\ArkViewer2.Image\Capabilities
+    // Capabilities\FileAssociations 下每个扩展名 → PROG_ID（由 Associate 逐个添加）
+    SetRegSz(HKEY_CURRENT_USER, L"Software\\RegisteredApplications",
+             L"Ark Viewer 2", base + L"\\Capabilities");
+    SetRegSz(HKEY_CURRENT_USER, (base + L"\\Capabilities").c_str(),
+             L"ApplicationName", L"Ark Viewer 2");
+    SetRegSz(HKEY_CURRENT_USER, (base + L"\\Capabilities\\FileAssociations").c_str(),
+             nullptr, L"");  // 创建子键，扩展名映射由 Associate 写入
+}
+
+// 注册单个扩展名到 Capabilities\FileAssociations（SetAppAsDefault 需要）
+static void RegisterCapability(const std::wstring& ext) {
+    std::wstring key = L"Software\\Classes\\ArkViewer2.Image\\Capabilities\\FileAssociations";
+    SetRegSz(HKEY_CURRENT_USER, key.c_str(), ext.c_str(), PROG_ID);
 }
 
 bool IsAssociated(const std::wstring& ext) {
@@ -57,13 +75,16 @@ bool IsAssociated(const std::wstring& ext) {
 
 bool Associate(const std::wstring& ext) {
     EnsureProgId();
+    RegisterCapability(ext);  // Capabilities\FileAssociations 注册（SetAppAsDefault 前提）
     // 主路径：系统标准 API，自动处理 UserChoice hash
+    // 注意：SetAppAsDefault 第一个参数是 ProgId 字符串（如 "ArkViewer2.Image"），
+    // 不是 exe 路径——传错会导致 API 失败走兜底，只加"打开方式"不设默认
     IApplicationAssociationRegistration* reg = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_ApplicationAssociationRegistration, nullptr,
                                   CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&reg));
     if (SUCCEEDED(hr) && reg) {
         // ASSOCIATIONTYPE::AT_FILEEXTENSION 用于文件扩展名关联（如 .jpg）
-        hr = reg->SetAppAsDefault(ExePath().c_str(), ext.c_str(), AT_FILEEXTENSION);
+        hr = reg->SetAppAsDefault(PROG_ID, ext.c_str(), AT_FILEEXTENSION);
         reg->Release();
         if (SUCCEEDED(hr)) return true;
     }

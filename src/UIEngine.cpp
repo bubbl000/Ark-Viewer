@@ -75,11 +75,11 @@ void UIEngine::Draw(D2DRenderer& r) {
 void UIEngine::DrawEdgeNavButtons(D2DRenderer& r) {
     int winW = r.Width();
     int winH = r.Height();
-    int btnW = 38, btnH = 64;
+    int btnW = 48, btnH = 76;
     int y = (winH - btnH) / 2;
-    // 垂直居中、贴左右边缘（x=0 / x=winW-btnW），符合 Prism NavBtnStyle
-    _edgeNavLeft  = { 0, y, btnW, y + btnH };
-    _edgeNavRight = { winW - btnW, y, winW, y + btnH };
+    // 垂直居中、距左右边缘 8px（不贴边，与标题栏按钮一致）
+    _edgeNavLeft  = { 8, y, 8 + btnW, y + btnH };
+    _edgeNavRight = { winW - 8 - btnW, y, winW - 8, y + btnH };
 
     auto inRect = [&](const RECT& rc) {
         return _mouseX >= rc.left && _mouseX < rc.right &&

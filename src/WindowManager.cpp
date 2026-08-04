@@ -5,6 +5,7 @@
 #include "ExifParser.h"
 #include "DragSource.h"
 #include "FileAssoc.h"
+#include "MessageBoxDlg.h"
 #include "DecoderFactory.h"
 #include "SettingsPanel.h"
 #include "SaveAsDialog.h"
@@ -58,9 +59,9 @@ void WindowContext::LoadPath(const std::wstring& path) {
     if (!imageEngine.LoadFile(path)) {
         auto dotPos = path.find_last_of(L'.');
         std::wstring ext = (dotPos != std::wstring::npos) ? path.substr(dotPos) : L"";
-        MessageBoxW(window.Handle(),
-            (L"不支持此文件格式: " + ext).c_str(),
-            L"提示", MB_OK | MB_ICONINFORMATION);
+        MessageBoxDlg::Show(window.Handle(),
+            L"不支持此文件格式: " + ext,
+            L"提示", false);
         return;
     }
     fileWatcher.Watch(path);
@@ -125,10 +126,9 @@ void WindowContext::RequestNavigate(int dir) {
             if (imageEngine.NavigateToSiblingFolder(-1)) return;
             newIdx = (int)files.size() - 1;  // 失败则循环到末尾
         } else if (cfg.folderNavPolicy == 2) {
-            // 询问
+            // 询问（自绘深色弹窗，与主界面样式统一）
             FlushPendingNavigate();
-            if (MessageBoxW(window.Handle(), L"是否进入上一个文件夹？", L"提示",
-                            MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            if (MessageBoxDlg::Show(window.Handle(), L"是否进入上一个文件夹？", L"提示", true) == IDYES) {
                 if (imageEngine.NavigateToSiblingFolder(-1)) return;
             }
             newIdx = (int)files.size() - 1;  // 选否则循环到末尾
@@ -142,9 +142,9 @@ void WindowContext::RequestNavigate(int dir) {
             if (imageEngine.NavigateToSiblingFolder(1)) return;
             newIdx = 0;
         } else if (cfg.folderNavPolicy == 2) {
+            // 询问（自绘深色弹窗）
             FlushPendingNavigate();
-            if (MessageBoxW(window.Handle(), L"是否进入下一个文件夹？", L"提示",
-                            MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            if (MessageBoxDlg::Show(window.Handle(), L"是否进入下一个文件夹？", L"提示", true) == IDYES) {
                 if (imageEngine.NavigateToSiblingFolder(1)) return;
             }
             newIdx = 0;
@@ -813,7 +813,7 @@ void WindowContext::DeleteCurrentFile() {
         }
         window.Invalidate();
     } else {
-        MessageBoxW(window.Handle(), L"删除失败", L"提示", MB_OK | MB_ICONWARNING);
+        MessageBoxDlg::Show(window.Handle(), L"删除失败", L"提示", false);
     }
 }
 
@@ -906,8 +906,7 @@ void WindowContext::RenameCurrentFile() {
 
     std::wstring targetPath = dir + newName;
     if (!MoveFileW(oldPath.c_str(), targetPath.c_str())) {
-        MessageBoxW(window.Handle(), L"重命名失败：文件被占用或名称无效",
-                    L"错误", MB_OK | MB_ICONERROR);
+        MessageBoxDlg::Show(window.Handle(), L"重命名失败：文件被占用或名称无效", L"提示", false);
         return;
     }
 
@@ -1027,7 +1026,7 @@ void WindowContext::SaveAs() {
     std::vector<uint8_t> pixels;
     int w, h, stride;
     if (!imageEngine.ReadSourcePixels(pixels, w, h, stride)) {
-        MessageBoxW(window.Handle(), L"读取像素失败", L"错误", MB_OK | MB_ICONERROR);
+        MessageBoxDlg::Show(window.Handle(), L"读取像素失败", L"错误", false);
         return;
     }
 
@@ -1052,7 +1051,7 @@ void WindowContext::SaveAs() {
         case OutFmt::Bmp:  ok = EncodeBmp(pixels.data(), w, h, stride, buf); break;
     }
     if (!ok) {
-        MessageBoxW(window.Handle(), L"编码失败", L"错误", MB_OK | MB_ICONERROR);
+        MessageBoxDlg::Show(window.Handle(), L"编码失败", L"错误", false);
         return;
     }
 
@@ -1061,7 +1060,7 @@ void WindowContext::SaveAs() {
         HANDLE hf = CreateFileW(outPath.c_str(), GENERIC_WRITE, 0, nullptr,
                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hf == INVALID_HANDLE_VALUE) {
-            MessageBoxW(window.Handle(), L"写入文件失败", L"错误", MB_OK | MB_ICONERROR);
+            MessageBoxDlg::Show(window.Handle(), L"写入文件失败", L"错误", false);
             return;
         }
         DWORD written = 0;
@@ -1082,7 +1081,7 @@ void WindowContext::SetAsWallpaper() {
     if (SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, buf, SPIF_UPDATEINIFILE)) {
         ui.SetStatusText(L"已设为壁纸: " + path);
     } else {
-        MessageBoxW(window.Handle(), L"设为壁纸失败", L"错误", MB_OK | MB_ICONERROR);
+        MessageBoxDlg::Show(window.Handle(), L"设为壁纸失败", L"错误", false);
     }
 }
 
@@ -1924,9 +1923,9 @@ WindowContext* WindowManager::CreateNewWindow(const std::wstring& path, int cmdS
         return cur;
     }
     if (promptOnLimit && (int)_windows.size() >= MAX_WINDOWS) {
-        if (MessageBoxW(nullptr,
+        if (MessageBoxDlg::Show(nullptr,
                 L"已达到 10 个窗口上限，是否继续打开？",
-                L"提示", MB_YESNO | MB_ICONQUESTION) == IDNO) {
+                L"提示", true) == IDNO) {
             return nullptr;
         }
     }
@@ -1955,9 +1954,9 @@ void WindowManager::OnDropFiles(WindowContext* ctx, const std::vector<std::wstri
     bool allowExceed = false;
     for (const auto& p : paths) {
         if ((int)_windows.size() >= MAX_WINDOWS && !allowExceed) {
-            if (MessageBoxW(nullptr,
+            if (MessageBoxDlg::Show(nullptr,
                     L"将打开多个新窗口，已达 10 个上限，是否继续？",
-                    L"提示", MB_YESNO | MB_ICONQUESTION) == IDNO) break;
+                    L"提示", true) == IDNO) break;
             allowExceed = true;
         }
         CreateNewWindow(p, SW_SHOW, /*promptOnLimit=*/false);
