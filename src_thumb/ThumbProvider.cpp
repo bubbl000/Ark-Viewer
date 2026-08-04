@@ -50,6 +50,8 @@ IFACEMETHODIMP ThumbProvider::QueryInterface(REFIID riid, void** ppv) {
         *ppv = static_cast<IThumbnailProvider*>(this);
     } else if (riid == __uuidof(IInitializeWithItem)) {
         *ppv = static_cast<IInitializeWithItem*>(this);
+    } else if (riid == __uuidof(IInitializeWithStream)) {
+        *ppv = static_cast<IInitializeWithStream*>(this);
     } else {
         *ppv = nullptr;
         return E_NOINTERFACE;
@@ -79,6 +81,85 @@ IFACEMETHODIMP ThumbProvider::Initialize(IShellItem* pItem, DWORD grfMode) {
     _path = pszPath;
     CoTaskMemFree(pszPath);
     return _path.empty() ? E_FAIL : S_OK;
+}
+
+// ── IInitializeWithStream：Shell 打开文件后把 IStream 注入 ──
+// dllhost 低完整性环境下 provider 自己打开 E 盘文件可能失败（GetDisplayName 权限受限），
+// 由 Explorer 传流则没有权限问题。流式复制到临时文件（边读边写，不占内存，
+// 支持 1GB+ 的 PSD/PSB）后复用 Extract(path) 解码逻辑。
+
+// 根据文件头部魔数推断扩展名（流模式没有文件名，Extract 按扩展名路由解码器）
+static std::wstring SniffExtension(const std::string& data) {
+    if (data.size() >= 4 && data[0] == '8' && data[1] == 'B' && data[2] == 'P' && data[3] == 'S')
+        return L".psd";  // PSD/PSB 共用魔数，PSB 由 PsdDecoder 内部分辨
+    if (data.size() >= 12 && data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p') {
+        // ISO-BMFF（HEIC/HEIF/HIF/CR3）：看 brand
+        if (data.size() >= 12) {
+            std::string brand(data, 8, 4);
+            if (brand == "cr3 " || brand == "crx ") return L".cr3";
+            if (brand == "heic" || brand == "heix" || brand == "heim") return L".heic";
+            if (brand == "heif" || brand == "mif1" || brand == "msf1") return L".heif";
+            return L".heic";
+        }
+    }
+    if (data.size() >= 4 && ((data[0] == 'I' && data[1] == 'I' && data[2] == '*' && data[3] == 0) ||
+                             (data[0] == 'M' && data[1] == 'M' && data[2] == 0 && data[3] == '*')))
+        return L".arw";  // TIFF 结构（ARW/CR2/DNG/NEF 共用，按 TIFF 解析）
+    if (data.size() >= 10 && data[0] == '#' && data[1] == '?' && data[2] == 'R' && data[3] == 'A')
+        return L".hdr";
+    if (data.size() >= 5 && data[0] == '<' && data[1] == '?' && data[2] == 'x' && data[3] == 'm' && data[4] == 'l')
+        return L".svg";
+    return L".tmp";  // 无法识别 → 保持 .tmp（Extract 会失败返回 false）
+}
+
+IFACEMETHODIMP ThumbProvider::Initialize(IStream* pStream, DWORD grfMode) {
+    if (!pStream) return E_INVALIDARG;
+    _mode = grfMode;
+
+    // 1. 先读头部 64KB 用于嗅探魔数（覆盖所有已知格式的魔数长度）
+    char head[65536];
+    ULONG headRead = 0;
+    HRESULT hr = pStream->Read(head, sizeof(head), &headRead);
+    if (FAILED(hr) || headRead == 0) return E_FAIL;
+    std::string headData(head, headRead);
+    std::wstring ext = SniffExtension(headData);
+
+    // 2. 创建临时文件（%TEMP%\arkthumb_stream_<pid><ext>）
+    wchar_t tmpPath[MAX_PATH] = {};
+    if (!GetTempPathW(MAX_PATH, tmpPath)) return E_FAIL;
+    std::wstring tmp = std::wstring(tmpPath) + L"arkthumb_stream_" +
+                       std::to_wstring(GetCurrentProcessId()) + ext;
+    HANDLE hFile = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return E_FAIL;
+
+    // 3. 边读边写（64KB 缓冲循环，任意大小文件不占内存）
+    BOOL ok = TRUE;
+    DWORD written = 0;
+    if (!WriteFile(hFile, head, headRead, &written, nullptr) || written != headRead) {
+        ok = FALSE;
+    }
+    char buf[65536];
+    ULONG nRead = 0;
+    while (ok && SUCCEEDED(hr)) {
+        hr = pStream->Read(buf, sizeof(buf), &nRead);
+        if (FAILED(hr)) { ok = FALSE; break; }
+        if (nRead == 0) break;
+        written = 0;
+        if (!WriteFile(hFile, buf, nRead, &written, nullptr) || written != nRead) {
+            ok = FALSE;
+            break;
+        }
+    }
+    CloseHandle(hFile);
+    if (!ok) {
+        DeleteFileW(tmp.c_str());
+        return E_FAIL;
+    }
+
+    _path = tmp;
+    _hasStream = true;
+    return S_OK;
 }
 
 // ── IThumbnailProvider：生成 cx×cx 缩略图 HBITMAP ──

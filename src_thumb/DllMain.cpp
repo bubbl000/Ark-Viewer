@@ -102,7 +102,32 @@ STDAPI DllRegisterServer() {
         std::wstring s2 = std::wstring(L"SystemFileAssociations\\") + ext +
                           L"\\shellex\\" + kThumbIidStr;
         RegSetString(HKEY_CLASSES_ROOT, s2.c_str(), nullptr, kClsidStr);
+
+        // 2a. 默认 ProgId 的 shellex：Windows 缩略图路由优先查扩展名关联的
+        //     ProgId（如 .psd → Photoshop.Image.27），若该 ProgId 有自己的
+        //     缩略图处理器（常失效）就轮不到我们。把自己的 CLSID 写进 ProgId
+        //     shellex，确保无论关联到哪个程序缩略图都生效（参考 PicPreview）。
+        HKEY hExt = nullptr;
+        wchar_t progId[256] = {};
+        DWORD progIdLen = sizeof(progId);
+        if (RegOpenKeyExW(HKEY_CLASSES_ROOT, ext, 0, KEY_QUERY_VALUE, &hExt) == ERROR_SUCCESS) {
+            LONG qr = RegQueryValueExW(hExt, nullptr, nullptr, nullptr,
+                                       (LPBYTE)progId, &progIdLen);
+            RegCloseKey(hExt);
+            if (qr == ERROR_SUCCESS && progId[0] != L'\0') {
+                std::wstring pKey = std::wstring(progId) + L"\\shellex\\" + kThumbIidStr;
+                RegSetString(HKEY_CLASSES_ROOT, pKey.c_str(), nullptr, kClsidStr);
+            }
+        }
     }
+
+    // 2b. Shell Extensions Approved 批准列表（Windows 10/11 加载 shell 扩展的必要条件）
+    //     缺这个键时 dllhost 拒绝加载 provider → 缩略图不显示（Win11 24H2 实测必现）
+    //     注意：必须用 HKEY_LOCAL_MACHINE + 完整路径，不能用 HKEY_CLASSES_ROOT 前缀
+    //     （HKCR 是 HKLM\Software\Classes 的映射，写进去会落到 Classes\Software\... 错误位置）
+    RegSetString(HKEY_LOCAL_MACHINE,
+                 L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved",
+                 kClsidStr, L"ArkThumbProvider Thumbnail Handler");
 
     // 3. 通知 shell 刷新缩略图缓存
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
@@ -112,6 +137,15 @@ STDAPI DllRegisterServer() {
 // ── DllUnregisterServer：删除注册表项 ──
 // 精准删除本 provider 的 IID 子键，保留其他软件在 shellex 下注册的处理器
 STDAPI DllUnregisterServer() {
+    // 0. 删除 Shell Extensions Approved 条目（HKLM 完整路径，见 DllRegisterServer 注释）
+    HKEY hApproved = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                      L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved",
+                      0, KEY_SET_VALUE, &hApproved) == ERROR_SUCCESS) {
+        RegDeleteValueW(hApproved, kClsidStr);
+        RegCloseKey(hApproved);
+    }
+
     // 1. 删 CLSID 整树
     std::wstring clsidKey = std::wstring(L"CLSID\\") + kClsidStr;
     RegDeleteTreeW(HKEY_CLASSES_ROOT, clsidKey.c_str());

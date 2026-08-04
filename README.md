@@ -6,7 +6,7 @@ GPU 硬件解码、超大图分块加载与毫秒级翻页。
 
 ## 主要特性
 - 专注看图：保持简洁的浏览体验，功能聚焦（浏览/缩放/旋转/翻页/EXIF/缩略图）。
-- 支持 Windows x64 图片缩略图扩展（ArkThumbProvider.dll，14 种专业格式）。
+- 支持 Windows x64 图片缩略图扩展（ArkThumbProvider.dll，19 种扩展名：RAW 系/PSD/PSB/HEIC/HEIF/SVG/HDR 等）。
 - 添加了 MCP 诊断服务，适合二次开发时 AI 对软件调试。
 - F12 查看活动日志
 

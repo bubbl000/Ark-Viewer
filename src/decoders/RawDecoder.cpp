@@ -23,6 +23,7 @@ typedef int (*fn_libraw_unpack)(void* lr);
 typedef int (*fn_libraw_unpack_thumb)(void* lr);  // 提取内嵌缩略图（不解 demosaic）
 typedef int (*fn_libraw_get_iwidth)(void* lr);
 typedef int (*fn_libraw_get_iheight)(void* lr);
+typedef int (*fn_libraw_adjust_sizes_info_only)(void* lr);  // 应用 EXIF Orientation 到尺寸
 typedef void (*fn_libraw_set_demosaic)(void* lr, int qual);
 typedef void (*fn_libraw_set_output_color)(void* lr, int color);
 typedef void (*fn_libraw_set_output_bps)(void* lr, int bps);
@@ -49,6 +50,7 @@ static fn_libraw_unpack            g_unpack = nullptr;
 static fn_libraw_unpack_thumb      g_unpack_thumb = nullptr;
 static fn_libraw_get_iwidth        g_get_iw = nullptr;
 static fn_libraw_get_iheight       g_get_ih = nullptr;
+static fn_libraw_adjust_sizes_info_only g_adjust_sizes = nullptr;
 static fn_libraw_set_demosaic      g_set_demosaic = nullptr;
 static fn_libraw_set_output_color  g_set_color = nullptr;
 static fn_libraw_set_output_bps    g_set_bps = nullptr;
@@ -76,6 +78,7 @@ static bool LoadLibRaw() {
     g_unpack_thumb = (fn_libraw_unpack_thumb)      GetProcAddress(g_librawDll, "libraw_unpack_thumb");
     g_get_iw       = (fn_libraw_get_iwidth)        GetProcAddress(g_librawDll, "libraw_get_iwidth");
     g_get_ih       = (fn_libraw_get_iheight)       GetProcAddress(g_librawDll, "libraw_get_iheight");
+    g_adjust_sizes = (fn_libraw_adjust_sizes_info_only) GetProcAddress(g_librawDll, "libraw_adjust_sizes_info_only");
     g_set_demosaic = (fn_libraw_set_demosaic)      GetProcAddress(g_librawDll, "libraw_set_demosaic");
     g_set_color    = (fn_libraw_set_output_color)  GetProcAddress(g_librawDll, "libraw_set_output_color");
     g_set_bps      = (fn_libraw_set_output_bps)    GetProcAddress(g_librawDll, "libraw_set_output_bps");
@@ -94,6 +97,66 @@ static bool LoadLibRaw() {
 
     // 缩略图相关符号缺失不阻塞主解码路径（DecodeFull 仍可用）
     return g_init && g_close && g_open && g_unpack && g_process && g_make_mem && g_clear_mem;
+}
+
+// ─── libde265 C API（仅 CR3 type=4 HEVC 缩略图分支用） ───
+// 动态加载 libde265.dll；heif.dll 运行期依赖同一 dll，dllhost 上下文已可定位
+// 签名取自临时/libde265-master/libde265/de265.h（与 build/libde265.dll 同源）
+struct de265_image;                   // 不透明图像
+typedef void de265_decoder_context;   // 不透明解码上下文
+typedef int  de265_error;             // enum，4 字节
+typedef int64_t de265_PTS;
+
+typedef de265_decoder_context* (*fn_de265_new_decoder)(void);
+typedef de265_error (*fn_de265_free_decoder)(de265_decoder_context*);
+// 注意：5 参数版（ctx,data,length,pts,user_data），非老版 3 参数
+typedef de265_error (*fn_de265_push_data)(de265_decoder_context*, const void*, int, de265_PTS, void*);
+typedef void        (*fn_de265_push_end_of_NAL)(de265_decoder_context*);
+typedef de265_error (*fn_de265_flush_data)(de265_decoder_context*);
+typedef de265_error (*fn_de265_decode)(de265_decoder_context*, int* more);
+typedef const de265_image* (*fn_de265_get_next_picture)(de265_decoder_context*);
+typedef int (*fn_de265_get_image_width)(const de265_image*, int channel);
+typedef int (*fn_de265_get_image_height)(const de265_image*, int channel);
+typedef const uint8_t* (*fn_de265_get_image_plane)(const de265_image*, int channel, int* out_stride);
+typedef int (*fn_de265_get_image_full_range_flag)(const de265_image*);
+typedef int (*fn_de265_get_image_matrix_coefficients)(const de265_image*);
+typedef const char* (*fn_de265_get_error_text)(de265_error);
+
+static HMODULE g_de265Dll = nullptr;
+static fn_de265_new_decoder              g_d265_new = nullptr;
+static fn_de265_free_decoder             g_d265_free = nullptr;
+static fn_de265_push_data                g_d265_push = nullptr;
+static fn_de265_push_end_of_NAL          g_d265_push_eonal = nullptr;
+static fn_de265_flush_data               g_d265_flush = nullptr;
+static fn_de265_decode                   g_d265_decode = nullptr;
+static fn_de265_get_next_picture         g_d265_next = nullptr;
+static fn_de265_get_image_width          g_d265_w = nullptr;
+static fn_de265_get_image_height         g_d265_h = nullptr;
+static fn_de265_get_image_plane          g_d265_plane = nullptr;
+static fn_de265_get_image_full_range_flag    g_d265_fullrange = nullptr;
+static fn_de265_get_image_matrix_coefficients g_d265_matrix = nullptr;
+static fn_de265_get_error_text           g_d265_errtext = nullptr;
+
+// 加载 libde265.dll；符号缺失不阻塞 libraw 主路径，仅 type=4 分支不可用
+static bool LoadLibDe265() {
+    if (g_de265Dll) return true;
+    g_de265Dll = LoadLibraryW(L"libde265.dll");
+    if (!g_de265Dll) return false;
+    g_d265_new        = (fn_de265_new_decoder)GetProcAddress(g_de265Dll, "de265_new_decoder");
+    g_d265_free       = (fn_de265_free_decoder)GetProcAddress(g_de265Dll, "de265_free_decoder");
+    g_d265_push       = (fn_de265_push_data)GetProcAddress(g_de265Dll, "de265_push_data");
+    g_d265_push_eonal = (fn_de265_push_end_of_NAL)GetProcAddress(g_de265Dll, "de265_push_end_of_NAL");
+    g_d265_flush      = (fn_de265_flush_data)GetProcAddress(g_de265Dll, "de265_flush_data");
+    g_d265_decode     = (fn_de265_decode)GetProcAddress(g_de265Dll, "de265_decode");
+    g_d265_next       = (fn_de265_get_next_picture)GetProcAddress(g_de265Dll, "de265_get_next_picture");
+    g_d265_w          = (fn_de265_get_image_width)GetProcAddress(g_de265Dll, "de265_get_image_width");
+    g_d265_h          = (fn_de265_get_image_height)GetProcAddress(g_de265Dll, "de265_get_image_height");
+    g_d265_plane      = (fn_de265_get_image_plane)GetProcAddress(g_de265Dll, "de265_get_image_plane");
+    g_d265_fullrange  = (fn_de265_get_image_full_range_flag)GetProcAddress(g_de265Dll, "de265_get_image_full_range_flag");
+    g_d265_matrix     = (fn_de265_get_image_matrix_coefficients)GetProcAddress(g_de265Dll, "de265_get_image_matrix_coefficients");
+    g_d265_errtext    = (fn_de265_get_error_text)GetProcAddress(g_de265Dll, "de265_get_error_text");
+    return g_d265_new && g_d265_free && g_d265_push && g_d265_decode &&
+           g_d265_next && g_d265_w && g_d265_h && g_d265_plane;
 }
 
 // ─── TIFF-based RAW 检测 ───
@@ -214,6 +277,10 @@ std::optional<ImageDecoder::OpenResult> RawDecoder::Open(const uint8_t* data, si
         void* lr = g_init(0);
         if (lr) {
             if (g_open(lr, data, len) == 0) {
+                // 应用 EXIF Orientation（flip）：相机竖图 raw 存储为横向（如 6000x4000），
+                // adjust_sizes_info_only 把宽高按 orientation 互换（→4000x6000），
+                // 与 DecodeFull 输出（已旋转）保持一致。不调则 Open 报错方向导致显示比例错误。
+                if (g_adjust_sizes) g_adjust_sizes(lr);
                 r.info.width  = g_get_iw(lr);
                 r.info.height = g_get_ih(lr);
             }
@@ -557,6 +624,174 @@ static std::optional<DecodeResult> DecodeJpegWithWic(const uint8_t* jpeg, size_t
     return result;
 }
 
+// ─── CR3 HEVC 缩略图解码（type=4） ───
+// 佳能 R5/R6 CR3 内嵌缩略图为 HEVC 编码，libraw 不识别原样返回 type=4
+// 缩略图块是 ISO-BMFF box 序列：CISZ(尺寸) + hvcC(参数集) + colr + pixi + IMGD(图像 NAL)
+// 提取 hvcC 内 VPS/SPS/PPS（2 字节长度前缀）+ IMGD 内 IDR NAL（lengthSizeMinusOne+1 前缀），
+// 加 00 00 00 01 起始码组装 Annex-B 流，libde265 解出 YUV420 → BGRA8
+// 失败返回 nullopt，由调用方回退（老机型走 type=1/0 不进此函数）
+static std::optional<DecodeResult> DecodeHevcThumbnail(const uint8_t* data, size_t len) {
+    if (!LoadLibDe265()) return std::nullopt;
+
+    // ISO-BMFF box 遍历：[4B 大端 size][4B type][size-8 payload]，取 hvcC/IMGD/CISZ
+    const uint8_t* hvcC = nullptr; size_t hvcCLen = 0;
+    const uint8_t* imgd = nullptr; size_t imgdLen = 0;
+    const uint8_t* cisz = nullptr; size_t ciszLen = 0;  // 显示尺寸（解码尺寸可能 CTU pad 更大）
+    size_t off = 0;
+    while (off + 8 <= len) {
+        uint32_t size = (data[off] << 24) | (data[off + 1] << 16) |
+                        (data[off + 2] << 8) | data[off + 3];
+        const char* type = (const char*)(data + off + 4);
+        if (size < 8) break;  // 非法/终止盒
+        size_t payloadOff = off + 8;
+        size_t payloadLen = (size_t)size - 8;
+        if (payloadOff + payloadLen > len) payloadLen = len - payloadOff;  // 末盒越界兜底
+        if (std::memcmp(type, "hvcC", 4) == 0) { hvcC = data + payloadOff; hvcCLen = payloadLen; }
+        else if (std::memcmp(type, "IMGD", 4) == 0) { imgd = data + payloadOff; imgdLen = payloadLen; }
+        else if (std::memcmp(type, "CISZ", 4) == 0) { cisz = data + payloadOff; ciszLen = payloadLen; }
+        off += size;
+    }
+    if (!hvcC || hvcCLen < 30 || !imgd || imgdLen < 8) return std::nullopt;
+
+    // 组装 Annex-B 位流：每个 NAL 前加 00 00 00 01 起始码
+    std::vector<uint8_t> stream;
+    static const uint8_t SC[] = {0, 0, 0, 1};
+    auto pushNal = [&](const uint8_t* nal, size_t n) {
+        if (n == 0) return;
+        stream.insert(stream.end(), SC, SC + 4);
+        stream.insert(stream.end(), nal, nal + n);
+    };
+
+    // hvcC：HEVCDecoderConfigurationRecord（ISO 14496-15）
+    //   byte21 低 2 位 = lengthSizeMinusOne（IMGD NAL 长度前缀字节数-1）
+    //   byte22 = numOfArrays → byte23 起 每数组 [1B type][2B numNalus]→[2B len + NAL]*
+    uint8_t lengthSizeMinusOne = hvcC[21] & 0x03;
+    size_t p = 22;
+    if (p >= hvcCLen) return std::nullopt;
+    int numArrays = hvcC[p++];
+    for (int i = 0; i < numArrays && p + 3 <= hvcCLen; i++) {
+        p += 1;  // array type
+        int numNalus = (hvcC[p] << 8) | hvcC[p + 1]; p += 2;
+        for (int j = 0; j < numNalus && p + 2 <= hvcCLen; j++) {
+            int naluLen = (hvcC[p] << 8) | hvcC[p + 1]; p += 2;
+            if (p + naluLen > hvcCLen) break;
+            pushNal(hvcC + p, naluLen);
+            p += naluLen;
+        }
+    }
+
+    // IMGD：[4B 版本][lengthSizeMinusOne+1 字节大端 NAL 长度][NAL]*，通常单个 IDR(type=19)
+    {
+        int lp = lengthSizeMinusOne + 1;  // NAL 长度前缀字节数（典型 4）
+        size_t q = 4;                     // 跳过 4 字节版本
+        while (q + (size_t)lp <= imgdLen) {
+            uint32_t n = 0;
+            for (int k = 0; k < lp; k++) n = (n << 8) | imgd[q + k];
+            q += lp;
+            if (n == 0 || q + n > imgdLen) break;
+            pushNal(imgd + q, n);
+            q += n;
+        }
+    }
+    if (stream.empty()) return std::nullopt;
+
+    // libde265 解码：句柄每调用独立创建/释放（缩略图在多线程 dllhost 中提取）
+    de265_decoder_context* ctx = g_d265_new();
+    if (!ctx) return std::nullopt;
+
+    // ctx 作用域内解码+转换；任何失败直接 break，末尾统一 free
+    std::optional<DecodeResult> result;
+    do {
+        de265_error err = g_d265_push(ctx, stream.data(), (int)stream.size(), 0, nullptr);
+        if (err != 0) {
+            LOG_WARN_STREAM("RawDecoder") << "de265_push_data 失败: "
+                                          << (g_d265_errtext ? g_d265_errtext(err) : "?");
+            break;
+        }
+        if (g_d265_push_eonal) g_d265_push_eonal(ctx);  // 通知末 NAL 结束
+        if (g_d265_flush(ctx) != 0) { LOG_WARN("RawDecoder", "de265_flush_data 失败"); break; }
+
+        // decode 循环直到取出图像或 more=false（单 IDR 应首轮产出）
+        const de265_image* img = nullptr;
+        int more = 0;
+        for (int iter = 0; iter < 16; iter++) {
+            g_d265_decode(ctx, &more);
+            img = g_d265_next(ctx);
+            if (img) break;
+            if (!more) break;
+        }
+        if (!img) { LOG_WARN("RawDecoder", "de265 未输出图像"); break; }
+
+        int w = g_d265_w(img, 0);  // 0=luma
+        int h = g_d265_h(img, 0);
+        int cw = g_d265_w(img, 1); // 色度平面宽
+        int ch = g_d265_h(img, 1); // 色度平面高
+        if (w <= 0 || h <= 0 || cw < (w + 1) / 2 || ch < (h + 1) / 2) break;  // 非 4:2:0
+
+        // 显示尺寸：HEVC 按 CTU 对齐，解码图可能比真实尺寸大（如 1080→1088）
+        // CISZ box payload: [4B 版本][4B 宽][4B 高]（大端），据此裁掉底部/右侧 padding
+        int dispW = w, dispH = h;
+        if (cisz && ciszLen >= 12) {
+            uint32_t zw = (cisz[4] << 24) | (cisz[5] << 16) | (cisz[6] << 8) | cisz[7];
+            uint32_t zh = (cisz[8] << 24) | (cisz[9] << 16) | (cisz[10] << 8) | cisz[11];
+            if (zw > 0 && zw <= (uint32_t)w && zh > 0 && zh <= (uint32_t)h) {
+                dispW = (int)zw; dispH = (int)zh;
+            }
+        }
+
+        int yStride = 0, uStride = 0, vStride = 0;
+        const uint8_t* yP = g_d265_plane(img, 0, &yStride);
+        const uint8_t* uP = g_d265_plane(img, 1, &uStride);
+        const uint8_t* vP = g_d265_plane(img, 2, &vStride);
+        if (!yP || !uP || !vP || yStride < w || uStride < cw || vStride < cw) break;
+
+        // YUV420→BGRA8：按图像 matrix_coefficients 选 601/709，full_range_flag 控制 range 展开
+        bool fullRange = g_d265_fullrange ? (g_d265_fullrange(img) != 0) : false;
+        int matrix = g_d265_matrix ? g_d265_matrix(img) : 0;
+        // 定点系数（Q8）：R=(yScale*C + cRCr*E + 128)>>8 等，C=Y(或Y-16), D=U-128, E=V-128
+        // [0]601limited [1]601full [2]709limited [3]709full
+        struct Coef { int yScale, cRCr, cGCb, cGCr, cBCb; };
+        static const Coef COEF[4] = {
+            {298, 409, -100, -208, 516},  // BT.601 limited
+            {256, 359,  -88, -183, 453},  // BT.601 full
+            {298, 459,  -55, -136, 541},  // BT.709 limited
+            {256, 404,  -48, -120, 476},  // BT.709 full
+        };
+        const Coef& c = COEF[(matrix == 1 ? 2 : 0) + (fullRange ? 1 : 0)];
+
+        DecodeResult r;
+        r.width = dispW; r.height = dispH; r.stride = dispW * 4;
+        r.pixels.resize((size_t)dispW * dispH * 4);
+        auto clip8 = [](int v) -> uint8_t {
+            return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
+        };
+        // 仅拷贝 dispW×dispH 子区域，读取解码平面（stride 对应解码 w×h，子集访问安全）
+        for (int y = 0; y < dispH; y++) {
+            const uint8_t* yRow = yP + (size_t)y * yStride;
+            const uint8_t* uRow = uP + (size_t)(y >> 1) * uStride;
+            const uint8_t* vRow = vP + (size_t)(y >> 1) * vStride;
+            uint8_t* dst = r.pixels.data() + (size_t)y * dispW * 4;
+            for (int x = 0; x < dispW; x++) {
+                int C = fullRange ? yRow[x] : (yRow[x] - 16);
+                int D = uRow[x >> 1] - 128;
+                int E = vRow[x >> 1] - 128;
+                dst[x * 4 + 0] = clip8((c.yScale * C + c.cBCb * D + 128) >> 8);  // B
+                dst[x * 4 + 1] = clip8((c.yScale * C + c.cGCb * D + c.cGCr * E + 128) >> 8);  // G
+                dst[x * 4 + 2] = clip8((c.yScale * C + c.cRCr * E + 128) >> 8);  // R
+                dst[x * 4 + 3] = 0xFF;
+            }
+        }
+        result = r;
+        LOG_INFO_STREAM("RawDecoder") << "HEVC 缩略图已解码: " << dispW << "x" << dispH
+                                       << "(" << w << "x" << h << " coded)"
+                                       << (fullRange ? " full" : " limited")
+                                       << " matrix=" << matrix;
+    } while (false);
+
+    g_d265_free(ctx);  // 隐式释放 image，无需 release_next_picture
+    return result;
+}
+
 // ─── DecodeThumbnail：提取相机内嵌缩略图（避开 demosaic） ───
 // libraw 缩略图类型：type=1 JPEG（多数相机），type=0 PPM bitmap（老相机）
 // JPEG → N 卡 nvJPEG 硬解，失败回退 WIC；PPM → 直接 RGB→BGRA8 转换
@@ -626,6 +861,10 @@ std::optional<DecodeResult> RawDecoder::DecodeThumbnail(const OpenResult& open) 
             r.pixels[i * 4 + 3] = 0xFF;              // A
         }
         result = r;
+    } else if (type == 4 && dataSize > 0) {
+        // 佳能 R5/R6 CR3：HEVC 编码内嵌缩略图（libraw 原样返回 type=4）
+        // 解析 ISO-BMFF box（hvcC 参数集 + IMGD 图像 NAL），libde265 解码 YUV420→BGRA8
+        result = DecodeHevcThumbnail(data, dataSize);
     }
 
     g_clear_mem(thumbPtr);

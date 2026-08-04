@@ -96,12 +96,20 @@ private:
 
 // ─── 便利宏 ───
 #ifdef ARK_THUMB_DLL
-// DLL 模式：日志宏空实现（不写文件，避免 dllhost 拉入日志子系统）
+// DLL 模式：日志写固定路径 C:\Users\aoebc\AppData\Local\Temp\arkthumb.log（调试用）
+// 用固定路径而非 getenv("TEMP")：dllhost 低权限进程环境变量可能缺失，避免 nullptr 崩溃
 #include <sstream>
-#define LOG_DBG(tag, msg)  ((void)0)
-#define LOG_INFO(tag, msg) ((void)0)
-#define LOG_WARN(tag, msg) ((void)0)
-#define LOG_ERR(tag, msg)  ((void)0)
+#include <fstream>
+namespace {
+inline void ThumbLog(const char* tag, const std::string& msg) {
+    std::ofstream f(L"C:\\Users\\aoebc\\AppData\\Local\\Temp\\arkthumb.log", std::ios::app);
+    if (f) f << tag << ": " << msg << "\n";
+}
+}
+#define LOG_DBG(tag, msg)  ThumbLog(tag, msg)
+#define LOG_INFO(tag, msg) ThumbLog(tag, msg)
+#define LOG_WARN(tag, msg) ThumbLog(tag, msg)
+#define LOG_ERR(tag, msg)  ThumbLog(tag, msg)
 #define LOG_DBG_STREAM(tag)  std::ostringstream()
 #define LOG_INFO_STREAM(tag) std::ostringstream()
 #define LOG_WARN_STREAM(tag) std::ostringstream()

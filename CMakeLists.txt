@@ -98,11 +98,11 @@ endif()
 # ─── Install + DLL 拷贝 ───
 install(TARGETS ArkViewer2 RUNTIME DESTINATION .)
 
-# 第三方解码 DLL 源目录：turbojpeg/libwebp 编译产物在 ../临时/，libheif/libraw 在 third_party/
+# 第三方解码 DLL 源目录：统一在 third_party/<库>/bin 下（turbojpeg/libwebp/libheif/libraw）
 # decoder 运行时 LoadLibrary 加载这些 DLL，需拷贝到 exe 旁
 set(THIRD_PARTY_DLL_DIRS
-    "${CMAKE_CURRENT_SOURCE_DIR}/../临时/libjpeg-turbo-main/build_simd"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../临时/libwebp-main/build_mt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libjpeg-turbo/bin"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp/bin"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libheif/bin"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libraw/bin"
 )
