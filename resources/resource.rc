@@ -1,0 +1,4 @@
+#include "resource.h"
+
+// 应用图标（多尺寸 ICO：16/32/48/64/128/256，PNG-in-ICO 格式 Vista+ 支持）
+IDI_APP ICON "app.ico"

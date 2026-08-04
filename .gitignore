@@ -1,0 +1,34 @@
+# ── 构建产物 ──
+build/
+build_ninja/
+outputs/
+__pycache__/
+*.pyc
+
+# ── 调试符号（发布不携带，泄露源码路径）──
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# ── 构建中间文件 ──
+build_log.txt
+build_err.txt
+.tmp_dumpbin.ps1
+dump_syms.bat
+resolve_offset.ps1
+
+# ── 测试/临时文件 ──
+*.log
+*.tmp
+test_thumb.cs
+
+# ── 编辑器/工具 ──
+.trae/
+.vscode/
+.idea/
+*.user
+
+# ── 系统 ──
+Thumbs.db
+Desktop.ini
