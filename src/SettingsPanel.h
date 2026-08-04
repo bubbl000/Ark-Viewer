@@ -31,7 +31,12 @@ private:
     std::vector<Assoc> _assocs;
     int  _assocScroll = 0;   // 列表滚动偏移（像素）
 
-    // 布局常量
+    // DPI 缩放因子（DPI/96）：高分屏（2K/4K）放大 UI 尺寸与字号
+    float _s = 1.0f;
+    // 设计值 → 当前 DPI 物理像素
+    int   S(int v)   const { return (int)(v * _s); }
+    float S(float v) const { return v * _s; }
+    // 布局常量（设计值，96 DPI 基准；使用时经 S() 缩放）
     static constexpr int WIN_W = 750, WIN_H = 620;
     static constexpr int NAV_W = 100, TAB_H = 38, ROW_H = 30;
     static constexpr int BTN_W = 80, BTN_H = 28;

@@ -301,8 +301,10 @@ LRESULT PlatformWindow::NcHitTest(int sx, int sy) {
     }
 
     // 顶部标题栏区域：拖动（HTCAPTION）或按钮（HTCLIENT 交 OnMouseDown）
-    if (pt.y >= 0 && pt.y < TITLEBAR_HEIGHT) {
-        int btnAreaLeft = W - TITLEBAR_HEIGHT * 5;  // 右侧 5 按钮区
+    // 高度随 DPI 放大（与 UIEngine::S(UI_TITLEBAR_HEIGHT) 一致，保证拖动/按钮区对齐）
+    int titleH = (int)(TITLEBAR_HEIGHT * GetDpiForWindow(_hwnd) / 96.0f);
+    if (pt.y >= 0 && pt.y < titleH) {
+        int btnAreaLeft = W - titleH * 5;  // 右侧 5 按钮区
         if (pt.x >= btnAreaLeft && pt.x < W) return HTCLIENT;
         return HTCAPTION;
     }

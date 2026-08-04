@@ -79,6 +79,9 @@ static void SendPathToRunningInstance(const std::wstring& path) {
 
 // ─── 入口点 ───
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int cmdShow) {
+    // DPI 感知：声明 Per-Monitor V2，禁止系统位图拉伸（否则 2K/4K 高分屏文字/按钮发糊）
+    // 需在创建任何窗口/调用 GDI 前调用；失败回退 SystemAware（至少不再被拉伸）
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     LOG_INFO("Main", "Ark Viewer 2 启动");
     // OLE 初始化：DoDragDrop（OLE 拖拽源）要求主线程通过 OleInitialize 初始化 OLE 子系统，
     // 仅 CoInitializeEx 不够。OleInitialize 内部调用 CoInitializeEx(STA)，

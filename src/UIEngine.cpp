@@ -16,12 +16,13 @@ UIEngine::~UIEngine() {
 
 void UIEngine::Initialize(IDWriteFactory* dwrite) {
     _dwrite = dwrite;
+    // 字号按 DPI 缩放：高分屏放大字体（DWrite 矢量渲染，放大后依然清晰）
     _dwrite->CreateTextFormat(L"Microsoft YaHei", nullptr,
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"zh-CN", &_textFormat);
+        DWRITE_FONT_STRETCH_NORMAL, S(14.0f), L"zh-CN", &_textFormat);
     _dwrite->CreateTextFormat(L"Microsoft YaHei", nullptr,
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 11.0f, L"zh-CN", &_smallFormat);
+        DWRITE_FONT_STRETCH_NORMAL, S(11.0f), L"zh-CN", &_smallFormat);
     if (_textFormat)  _textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     if (_smallFormat) _smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     CreateToolbarButtons();
@@ -75,11 +76,12 @@ void UIEngine::Draw(D2DRenderer& r) {
 void UIEngine::DrawEdgeNavButtons(D2DRenderer& r) {
     int winW = r.Width();
     int winH = r.Height();
-    int btnW = 48, btnH = 76;
+    int btnW = (int)S(48), btnH = (int)S(76);
     int y = (winH - btnH) / 2;
+    int margin = (int)S(8);
     // 垂直居中、距左右边缘 8px（不贴边，与标题栏按钮一致）
-    _edgeNavLeft  = { 8, y, 8 + btnW, y + btnH };
-    _edgeNavRight = { winW - 8 - btnW, y, winW - 8, y + btnH };
+    _edgeNavLeft  = { margin, y, margin + btnW, y + btnH };
+    _edgeNavRight = { winW - margin - btnW, y, winW - margin, y + btnH };
 
     auto inRect = [&](const RECT& rc) {
         return _mouseX >= rc.left && _mouseX < rc.right &&
@@ -92,7 +94,7 @@ void UIEngine::DrawEdgeNavButtons(D2DRenderer& r) {
         D2D1_COLOR_F bg = hover ? _theme.accent
                                 : D2D1::ColorF(0, 0, 0, alpha * 0.27f);
         // 圆角背景（半径 8，与窗口圆角风格一致）
-        r.FillRoundedRectangle((float)rc.left, (float)rc.top, (float)btnW, (float)btnH, 8, 8, bg);
+        r.FillRoundedRectangle((float)rc.left, (float)rc.top, (float)btnW, (float)btnH, S(8), S(8), bg);
         if (_textFormat && alpha > 0.1f) {
             // 水平+垂直双居中：_textFormat 水平已 CENTER，临时切垂直 CENTER，画完恢复 NEAR
             _textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -109,7 +111,7 @@ void UIEngine::DrawEdgeNavButtons(D2DRenderer& r) {
 // 自绘标题栏（Prism 35px）：左=软件名(#777)，中=文件名|尺寸|大小，右=5按钮(hover#55FFFFFF/关闭红)
 void UIEngine::DrawTitlebar(D2DRenderer& r) {
     int winW = r.Width();
-    float h = UI_TITLEBAR_HEIGHT;
+    float h = S(UI_TITLEBAR_HEIGHT);
 
     // 标题栏背景（无底部分隔线）
     r.FillRectangle(0, 0, (float)winW, h, _theme.bgTitlebar);
@@ -124,7 +126,7 @@ void UIEngine::DrawTitlebar(D2DRenderer& r) {
 
     // 左侧：软件名（#777，纯文字无图标避免 D2D/GDI 混用）
     if (_smallFormat) {
-        r.DrawText(L"Ark Viewer", 10, _smallFormat, 10, 0, 120, h,
+        r.DrawText(L"Ark Viewer", 10, _smallFormat, S(10), 0, S(120), h,
                    _theme.textSecondary);
     }
 
@@ -146,10 +148,10 @@ void UIEngine::DrawTitlebar(D2DRenderer& r) {
             return m.widthIncludingTrailingWhitespace;
         };
         // 可用宽度：左侧避让"Ark Viewer"(140)，右侧避让 5 按钮(UI_TITLEBAR_HEIGHT*5)
-        float leftReserve = 140.0f;
-        float rightReserve = (float)UI_TITLEBAR_HEIGHT * 5;
+        float leftReserve = S(140.0f);
+        float rightReserve = S(UI_TITLEBAR_HEIGHT) * 5;
         float availW = (float)winW - leftReserve - rightReserve;
-        if (availW < 40.0f) availW = 40.0f;
+        if (availW < S(40.0f)) availW = S(40.0f);
 
         float w1 = measure(_centerFileName);
         float w2 = measure(s2);
@@ -181,9 +183,9 @@ void UIEngine::DrawTitlebar(D2DRenderer& r) {
 
     // 右侧 5 按钮（32×25 垂直居中）：≡设置 ⛶全屏 ─最小化 ▢最大化 ✕关闭
     // 右侧留 8px 边距，关闭按钮不贴窗口边缘
-    int btnW = 32, btnH = 25;
+    int btnW = (int)S(32), btnH = (int)S(25);
     int by = (int)((h - btnH) / 2);
-    int rx = winW - 8;
+    int rx = winW - (int)S(8);
     auto setBtn = [&](RECT& rc) { rc = { rx - btnW, by, rx, by + btnH }; rx -= btnW; };
     setBtn(_tbCloseBtn);
     setBtn(_tbMaxBtn);
@@ -204,8 +206,8 @@ void UIEngine::DrawTitlebar(D2DRenderer& r) {
         }
         if (_textFormat) {
             r.DrawText(glyph, wcslen(glyph), _textFormat,
-                (float)rc.left, (float)rc.top + 3,
-                (float)btnW, (float)(btnH - 6),
+                (float)rc.left, (float)rc.top + S(3),
+                (float)btnW, (float)(btnH - S(6)),
                 hover ? D2D1::ColorF(1, 1, 1, 1) : _theme.textPrimary);
         }
     };
@@ -218,15 +220,15 @@ void UIEngine::DrawTitlebar(D2DRenderer& r) {
 
 void UIEngine::DrawToolbar(D2DRenderer& r) {
     int winW = r.Width();
-    float h = _theme.toolbarHeight;
+    float h = S(_theme.toolbarHeight);
     // 工具栏贴底（状态栏已移除）
     float offsetY = (float)r.Height() - h;
 
     // 工具栏背景（无底部分隔线）
     r.FillRectangle(0, offsetY, (float)winW, h, _theme.bgToolbar);
 
-    int bs = _theme.buttonSize;   // 34
-    int pad = _theme.padding;     // 6
+    int bs = (int)S(_theme.buttonSize);   // 34
+    int pad = (int)S(_theme.padding);     // 6
     int btnY = (int)(offsetY + (h - bs) / 2);
 
     auto inRect = [&](const RECT& rc) {
@@ -249,7 +251,7 @@ void UIEngine::DrawToolbar(D2DRenderer& r) {
     };
     // 竖分隔线（1×18 #404040，垂直居中）
     auto drawDivider = [&](float x) {
-        r.FillRectangle(x, offsetY + (h - 18) / 2, 1, 18, _theme.divider);
+        r.FillRectangle(x, offsetY + (h - S(18)) / 2, 1, S(18), _theme.divider);
     };
     // 按 id 把 rect 写回 _toolbarButtons（供 HitTest）
     auto syncRect = [&](int id, const RECT& rc) {
@@ -264,7 +266,7 @@ void UIEngine::DrawToolbar(D2DRenderer& r) {
     lx += bs + pad;
     drawDivider(lx); lx += 1 + pad;
     // 缩放%文本（无背景框，水平垂直居中显示）
-    float zoomBoxW = 72;
+    float zoomBoxW = S(72);
     if (!_zoomText.empty() && _smallFormat) {
         _smallFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         _smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -277,8 +279,8 @@ void UIEngine::DrawToolbar(D2DRenderer& r) {
     // 图片序号（#555 11px）
     if (!_indexText.empty() && _smallFormat)
         r.DrawText(_indexText.c_str(), (UINT32)_indexText.size(), _smallFormat,
-                   lx, offsetY + (h - 14) / 2, 90, 14, _theme.textWeak);
-    lx += 90 + pad;  // 左组真实结束位置（供中间区域计算）
+                   lx, offsetY + (h - S(14)) / 2, S(90), S(14), _theme.textWeak);
+    lx += S(90) + pad;  // 左组真实结束位置（供中间区域计算）
 
     // ── 右组：↺左旋 ↻右旋 | 分隔线 | ↔适应 | 1:1 | ⋮更多 ──
     float rx = (float)(winW - pad);
@@ -303,7 +305,7 @@ void UIEngine::DrawToolbar(D2DRenderer& r) {
         float midW = rx - lx;
         _smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         r.DrawTextTrimmed(_statusText.c_str(), (UINT32)_statusText.size(),
-            _smallFormat, lx, offsetY + (h - 14) / 2, midW, 14, _theme.textSecondary);
+            _smallFormat, lx, offsetY + (h - S(14)) / 2, midW, S(14), _theme.textSecondary);
         _smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
 }
@@ -311,7 +313,7 @@ void UIEngine::DrawToolbar(D2DRenderer& r) {
 void UIEngine::DrawStatusBar(D2DRenderer& r) {
     int winW = r.Width();
     int winH = r.Height();
-    float h = _theme.statusBarHeight;
+    float h = S(_theme.statusBarHeight);
     float y = (float)winH - h;
 
     r.FillRectangle(0, y, (float)winW, h, _theme.bgToolbar);
@@ -319,12 +321,12 @@ void UIEngine::DrawStatusBar(D2DRenderer& r) {
 
     if (!_statusText.empty() && _smallFormat) {
         r.DrawText(_statusText.c_str(), _statusText.size(),
-            _smallFormat, 8, y + 2, (float)winW - 200, h - 4,
+            _smallFormat, S(8), y + S(2), (float)winW - S(200), h - S(4),
             _theme.textSecondary);
     }
     if (!_zoomText.empty() && _smallFormat) {
         r.DrawText(_zoomText.c_str(), _zoomText.size(),
-            _smallFormat, (float)winW - 100, y + 2, 90, h - 4,
+            _smallFormat, (float)winW - S(100), y + S(2), S(90), h - S(4),
             _theme.textSecondary);
     }
 }
@@ -333,19 +335,19 @@ void UIEngine::DrawZoomControl(D2DRenderer& r) {
     // 右下角缩放滑块
     int winW = r.Width();
     int winH = r.Height();
-    float sx = (float)winW - 160;
+    float sx = (float)winW - S(160);
     // 工具栏在底部，缩放控件上移避让
-    float sy = (float)winH - _theme.statusBarHeight - _theme.toolbarHeight - 30;
-    float sw = 140, sh = 20;
+    float sy = (float)winH - S(_theme.statusBarHeight) - S(_theme.toolbarHeight) - S(30);
+    float sw = S(140), sh = S(20);
 
     r.FillRectangle(sx, sy, sw, sh, D2D1::ColorF(0.1f, 0.1f, 0.1f, 0.6f));
     // 缩小/放大 按钮指示
-    r.DrawText(L"-", 1, _textFormat, sx + 2, sy, 16, sh, _theme.textPrimary);
-    r.DrawText(L"+", 1, _textFormat, sx + sw - 18, sy, 16, sh, _theme.textPrimary);
+    r.DrawText(L"-", 1, _textFormat, sx + S(2), sy, S(16), sh, _theme.textPrimary);
+    r.DrawText(L"+", 1, _textFormat, sx + sw - S(18), sy, S(16), sh, _theme.textPrimary);
     // 缩放比例
     if (!_zoomText.empty() && _smallFormat) {
         r.DrawText(_zoomText.c_str(), _zoomText.size(),
-            _smallFormat, sx + 20, sy + 2, 100, sh - 4,
+            _smallFormat, sx + S(20), sy + S(2), S(100), sh - S(4),
             _theme.textPrimary);
     }
 }
@@ -361,22 +363,22 @@ void UIEngine::DrawInfoOverlay(D2DRenderer& r) {
 
     // 📂（52px）水平居中
     if (_textFormat) {
-        r.DrawText(L"\U0001F4C2", 2, _textFormat, cx - 26, cy - 110, 52, 52,
+        r.DrawText(L"\U0001F4C2", 2, _textFormat, cx - S(26), cy - S(110), S(52), S(52),
                    _theme.textSecondary);
     }
     if (_smallFormat) {
         // 主提示 + 支持格式水平居中：_smallFormat 默认 LEADING，临时切 CENTER，画完恢复
         _smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         r.DrawText(L"\u62D6\u653E\u56FE\u7247\u6216\u6587\u4EF6\u5939\u5230\u6B64\u5904", 12,
-                   _smallFormat, cx - 130, cy - 48, 260, 22, _theme.textWeak);
+                   _smallFormat, cx - S(130), cy - S(48), S(260), S(22), _theme.textWeak);
         r.DrawText(L"\u652F\u6301 JPG / PNG / WebP / BMP / GIF / TIFF / PSD / HDR / HEIF / RAW / SVG / ICO / TGA / DDS",
-                   64, _smallFormat, cx - 240, cy - 22, 480, 18, _theme.divider);
+                   64, _smallFormat, cx - S(240), cy - S(22), S(480), S(18), _theme.divider);
         _smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
     // 绿色"选择图片"按钮（#90C208 110×36，hover #7AAD06）
-    int btnW = 110, btnH = 36;
-    _emptyOpenBtn = { (int)(cx - btnW / 2), (int)(cy + 18),
-                      (int)(cx + btnW / 2), (int)(cy + 18 + btnH) };
+    int btnW = (int)S(110), btnH = (int)S(36);
+    _emptyOpenBtn = { (int)(cx - btnW / 2), (int)(cy + S(18)),
+                      (int)(cx + btnW / 2), (int)(cy + S(18) + btnH) };
     bool hover = _mouseX >= _emptyOpenBtn.left && _mouseX < _emptyOpenBtn.right &&
                  _mouseY >= _emptyOpenBtn.top && _mouseY < _emptyOpenBtn.bottom;
     r.FillRectangle((float)_emptyOpenBtn.left, (float)_emptyOpenBtn.top,
@@ -395,11 +397,12 @@ void UIEngine::DrawInfoOverlay(D2DRenderer& r) {
 // 全屏右上角按钮：退出全屏(⛶) + 关闭(✕)
 void UIEngine::DrawFullscreenButtons(D2DRenderer& r) {
     int winW = r.Width();
-    int btnSize = 28;
-    int y = 4;
+    int btnSize = (int)S(28);
+    int y = (int)S(4);
+    int margin = (int)S(8);
     // 从右到左：关闭、退出全屏（右侧留 8px 边距，与标题栏按钮一致）
-    _fsCloseBtn = { winW - btnSize - 8, y, winW - 8, y + btnSize };
-    _fsExitBtn  = { winW - btnSize * 2 - 16, y, winW - btnSize - 8, y + btnSize };
+    _fsCloseBtn = { winW - btnSize - margin, y, winW - margin, y + btnSize };
+    _fsExitBtn  = { winW - btnSize * 2 - margin * 2, y, winW - btnSize - margin, y + btnSize };
 
     auto drawBtn = [&](RECT rc, const wchar_t* glyph) {
         r.FillRectangle((float)rc.left, (float)rc.top,
@@ -407,8 +410,8 @@ void UIEngine::DrawFullscreenButtons(D2DRenderer& r) {
             D2D1::ColorF(0.2f, 0.2f, 0.2f, 0.8f));
         if (_textFormat) {
             r.DrawText(glyph, wcslen(glyph), _textFormat,
-                (float)rc.left, (float)rc.top + 2,
-                (float)(rc.right - rc.left), (float)(rc.bottom - rc.top) - 4,
+                (float)rc.left, (float)rc.top + S(2),
+                (float)(rc.right - rc.left), (float)(rc.bottom - rc.top) - S(4),
                 _theme.textPrimary);
         }
     };
@@ -419,9 +422,9 @@ void UIEngine::DrawFullscreenButtons(D2DRenderer& r) {
 // toggle 开关组件：轨道 40×20 圆角10，圆点半径8 白色
 // on=轨道 accent 主题绿 + 圆点右侧；off=轨道 textWeak 灰 + 圆点左侧
 void UIEngine::DrawToggleSwitch(D2DRenderer& r, float x, float y, bool on) {
-    r.FillRoundedRectangle(x, y, 40, 20, 10, 10,
+    r.FillRoundedRectangle(x, y, S(40), S(20), S(10), S(10),
         on ? _theme.accent : _theme.textWeak);
-    r.FillCircle(on ? x + 30 : x + 10, y + 10, 8, D2D1::ColorF(1, 1, 1, 1));
+    r.FillCircle(on ? x + S(30) : x + S(10), y + S(10), S(8), D2D1::ColorF(1, 1, 1, 1));
 }
 
 // "更多"浮动面板：从 ⋮ 按钮上方弹出，含鸟瞰图/缩略图两行 toggle
@@ -431,17 +434,17 @@ void UIEngine::DrawMorePanel(D2DRenderer& r) {
     constexpr float rowH = 36.0f;
     // 锚定 ⋮ 按钮：面板水平中心 = 按钮中心，底部 = 按钮顶部 - 4
     float btnCx = (float)(_moreBtn.left + _moreBtn.right) / 2;
-    float px = btnCx - panelW / 2;
-    float py = (float)_moreBtn.top - panelH - 4;
+    float px = btnCx - S(panelW) / 2;
+    float py = (float)_moreBtn.top - S(panelH) - S(4);
     // 越界钳制：避免面板超出窗口左右边界
-    if (px < 4) px = 4;
-    if (px + panelW > r.Width() - 4) px = (float)r.Width() - panelW - 4;
+    if (px < S(4)) px = S(4);
+    if (px + S(panelW) > r.Width() - S(4)) px = (float)r.Width() - S(panelW) - S(4);
     if (py < 0) py = 0;
-    _morePanelRect = { (int)px, (int)py, (int)(px + panelW), (int)(py + panelH) };
+    _morePanelRect = { (int)px, (int)py, (int)(px + S(panelW)), (int)(py + S(panelH)) };
 
     // 面板背景 + 边框（参照 DrawExifPanel 配色）
-    r.FillRectangle(px, py, panelW, panelH, _theme.panelBg);
-    r.DrawRectangle(px, py, panelW, panelH, _theme.border, 1.0f);
+    r.FillRectangle(px, py, S(panelW), S(panelH), _theme.panelBg);
+    r.DrawRectangle(px, py, S(panelW), S(panelH), _theme.border, 1.0f);
 
     if (!_smallFormat) return;
     // 两行：左标签 + 右 toggle（toggle 距右边缘 12，垂直居中于行）
@@ -449,16 +452,16 @@ void UIEngine::DrawMorePanel(D2DRenderer& r) {
     bool states[] = { _birdsEyeEnabled, _thumbBarEnabled };
     RECT* toggleRects[] = { &_moreToggleBirdsEye, &_moreToggleThumb };
     for (int i = 0; i < 2; i++) {
-        float rowY = py + 8 + i * rowH;
+        float rowY = py + S(8) + i * S(rowH);
         // 标签（左对齐，垂直居中）
         r.DrawText(labels[i], wcslen(labels[i]), _smallFormat,
-            px + 14, rowY + 3, 100, 22, _theme.textPrimary);
+            px + S(14), rowY + S(3), S(100), S(22), _theme.textPrimary);
         // toggle（右侧，距右边 12）
-        float tx = px + panelW - 40 - 12;
-        float ty = rowY + 8;
+        float tx = px + S(panelW) - S(40) - S(12);
+        float ty = rowY + S(8);
         DrawToggleSwitch(r, tx, ty, states[i]);
         // 记录 toggle 命中区（略大于轨道便于点击）
-        *toggleRects[i] = { (int)tx, (int)ty, (int)(tx + 40), (int)(ty + 20) };
+        *toggleRects[i] = { (int)tx, (int)ty, (int)(tx + S(40)), (int)(ty + S(20)) };
     }
 }
 
@@ -486,18 +489,18 @@ void UIEngine::DrawGifPanel(D2DRenderer& r) {
     int winH = r.Height();
 
     // 面板尺寸：帧号文本区 + 3 个按钮
-    float btnSize = 28.0f;
-    float panelH = 40.0f;
-    float textW = 64.0f;  // "帧 12/34"
-    float panelW = textW + btnSize * 3 + 20.0f;
+    float btnSize = S(28.0f);
+    float panelH = S(40.0f);
+    float textW = S(64.0f);  // "帧 12/34"
+    float panelW = textW + btnSize * 3 + S(20.0f);
 
     // 位置：自定义优先，否则默认右下角（避让工具栏）
     float px, py;
     if (_gifPanelPosX >= 0) {
         px = (float)_gifPanelPosX; py = (float)_gifPanelPosY;
     } else {
-        px = (float)winW - panelW - 12;
-        py = (float)winH - _theme.toolbarHeight - panelH - 12;
+        px = (float)winW - panelW - S(12);
+        py = (float)winH - S(_theme.toolbarHeight) - panelH - S(12);
     }
     if (px < 0) px = 0;
     if (py < 0) py = 0;
@@ -515,7 +518,7 @@ void UIEngine::DrawGifPanel(D2DRenderer& r) {
         std::wstring text = L"帧 " + std::to_wstring(_gifFrame + 1)
                           + L"/" + std::to_wstring(_gifFrameCount);
         r.DrawText(text.c_str(), (UINT32)text.size(), _smallFormat,
-            px + 8, py, textW, panelH, _theme.textPrimary);
+            px + S(8), py, textW, panelH, _theme.textPrimary);
         _smallFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     }
 
@@ -537,7 +540,7 @@ void UIEngine::DrawGifPanel(D2DRenderer& r) {
             _textFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         }
     };
-    float bx = px + textW + 4;
+    float bx = px + textW + S(4);
     float btnY = py + (panelH - btnSize) / 2;
     _gifBtnPrev = { (int)bx, (int)btnY, (int)(bx + btnSize), (int)(btnY + btnSize) };
     drawBtn(_gifBtnPrev, L"\u23EE");  // ⏮
@@ -610,14 +613,14 @@ void UIEngine::DrawExifPanel(D2DRenderer& r) {
 
     constexpr float rowH = 20.0f;     // 每行高度
     constexpr float titleH = 32.0f;   // 标题区
-    float panelW = 280;
+    float panelW = S(280);
     // 窗口过窄时钳制面板宽度，避免标题/字段被挤压溢出
-    float maxW = (float)winW - 24;
+    float maxW = (float)winW - S(24);
     if (panelW > maxW) panelW = maxW;
-    if (panelW < 160) panelW = 160;
-    float panelH = titleH + visibleRows * rowH + 10;
-    float bottomReserve = _theme.toolbarHeight + 12;  // 状态栏已移除
-    float maxH = (float)winH - bottomReserve - 12;
+    if (panelW < S(160)) panelW = S(160);
+    float panelH = S(titleH) + visibleRows * S(rowH) + S(10);
+    float bottomReserve = S(_theme.toolbarHeight) + S(12);  // 状态栏已移除
+    float maxH = (float)winH - bottomReserve - S(12);
     if (panelH > maxH) panelH = maxH;
 
     // 位置：自定义拖动位置优先，否则默认右上角避让标题栏
@@ -625,8 +628,8 @@ void UIEngine::DrawExifPanel(D2DRenderer& r) {
     if (_exifPanelPosX >= 0) {
         px = _exifPanelPosX; py = _exifPanelPosY;
     } else {
-        px = (float)winW - panelW - 12;
-        py = _fullscreen ? 44.0f : (UI_TITLEBAR_HEIGHT + 12);
+        px = (float)winW - panelW - S(12);
+        py = _fullscreen ? S(44.0f) : (S(UI_TITLEBAR_HEIGHT) + S(12));
     }
     // 越界钳制：确保面板完全在可视区内
     if (px < 0) px = 0;
@@ -642,18 +645,18 @@ void UIEngine::DrawExifPanel(D2DRenderer& r) {
 
     // 标题（省略号截断防挤压）
     r.DrawTextTrimmed(L"EXIF 信息", wcslen(L"EXIF 信息"), _textFormat,
-        px + 12, py + 6, panelW - 24, 24, _theme.textPrimary);
+        px + S(12), py + S(6), panelW - S(24), S(24), _theme.textPrimary);
 
     // 各字段（跳过空值，值超宽省略号截断）
-    float rowY = py + titleH;
+    float rowY = py + S(titleH);
     for (auto& f : _exif.fields) {
         if (f.value.empty()) continue;
         r.DrawTextTrimmed(f.label, wcslen(f.label), _smallFormat,
-            px + 12, rowY, 78, rowH, _theme.textSecondary);
+            px + S(12), rowY, S(78), S(rowH), _theme.textSecondary);
         r.DrawTextTrimmed(f.value.c_str(), f.value.size(), _smallFormat,
-            px + 92, rowY, panelW - 104, rowH, _theme.textPrimary);
-        rowY += rowH;
-        if (rowY > py + panelH - 4) break;  // 超出面板高度截断
+            px + S(92), rowY, panelW - S(104), S(rowH), _theme.textPrimary);
+        rowY += S(rowH);
+        if (rowY > py + panelH - S(4)) break;  // 超出面板高度截断
     }
 }
 
@@ -706,7 +709,7 @@ int UIEngine::HitTest(int x, int y) {
         if (inRect(_tbFsBtn))    return IDM_VIEW_FULLSCREEN;
         if (inRect(_tbMenuBtn))  return IDM_TITLEBAR_MENU;
         // 标题栏非按钮区域由 WM_NCHITTEST 处理拖动，HitTest 返回 -1
-        if (y < (int)UI_TITLEBAR_HEIGHT) return -1;
+        if (y < (int)S(UI_TITLEBAR_HEIGHT)) return -1;
     }
 
     // 工具栏按钮点击：返回命令 ID 供调用方触发 OnCommand
@@ -752,7 +755,7 @@ bool UIEngine::UpdateAnimations() {
 // 显隐触发区据此对齐，避免硬编码脱钩导致鼠标在条内却渐隐
 float UIEngine::ThumbBarTopY(float winH) const {
     constexpr float barH = 72.0f;
-    return winH - _theme.toolbarHeight - barH;  // 状态栏已移除，工具栏贴底
+    return winH - S(_theme.toolbarHeight) - S(barH);  // 状态栏已移除，工具栏贴底
 }
 
 // 复用 PreDecodeCache 顶层缩略图像素，GPU 纹理按索引懒创建、超可视范围淘汰
@@ -765,8 +768,8 @@ void UIEngine::DrawThumbBar(D2DRenderer& r) {
     constexpr float gap = 8.0f;       // 间距
     constexpr float barH = 72.0f;     // 条高（含上下内边距）
     // 工具栏在底部，缩略图条再上移一层避让
-    float barY = (float)winH - _theme.toolbarHeight - barH;  // 状态栏已移除，工具栏贴底
-    float step = thumbW + gap;
+    float barY = (float)winH - S(_theme.toolbarHeight) - S(barH);  // 状态栏已移除，工具栏贴底
+    float step = S(thumbW) + S(gap);
     float centerX = winW * 0.5f;
     int cur = _thumbCurrent;
     int total = (int)_thumbFiles->size();
@@ -775,8 +778,8 @@ void UIEngine::DrawThumbBar(D2DRenderer& r) {
 
     // 半透明背景条
     float bgAlpha = _thumbBarAlpha * 0.85f;
-    r.FillRectangle(0, barY, (float)winW, barH, D2D1::ColorF(0.1f, 0.1f, 0.1f, bgAlpha));
-    _thumbBarRect = { 0, (int)barY, winW, (int)(barY + barH) };
+    r.FillRectangle(0, barY, (float)winW, S(barH), D2D1::ColorF(0.1f, 0.1f, 0.1f, bgAlpha));
+    _thumbBarRect = { 0, (int)barY, winW, (int)(barY + S(barH)) };
 
     // 取/建索引 i 的顶层缩略图 GPU 纹理（懒创建，复用 PreDecodeCache）
     auto getTex = [&](int i) -> ID2D1Bitmap1* {
@@ -797,28 +800,28 @@ void UIEngine::DrawThumbBar(D2DRenderer& r) {
 
     for (int i = cur - N; i <= cur + N; i++) {
         if (i < 0 || i >= total) continue;
-        float x = centerX + (i - cur) * step - thumbW * 0.5f;
-        float y = barY + (barH - thumbW) * 0.5f;
+        float x = centerX + (i - cur) * step - S(thumbW) * 0.5f;
+        float y = barY + (S(barH) - S(thumbW)) * 0.5f;
         bool isCur = (i == cur);
         bool isHover = (i == hoverIdx) && !isCur;
         // 边框：当前图 accent 绿 2px，hover 白色半透 2px，其余 border 1px
         D2D1_COLOR_F bc = isCur ? _theme.accent
                         : (isHover ? D2D1::ColorF(1, 1, 1, 0.6f) : _theme.border);
-        r.DrawRectangle(x - 1, y - 1, thumbW + 2, thumbW + 2, bc,
+        r.DrawRectangle(x - 1, y - 1, S(thumbW) + 2, S(thumbW) + 2, bc,
                         (isCur || isHover) ? 2.0f : 1.0f);
 
         if (ID2D1Bitmap1* bmp = getTex(i)) {
             // 等比缩放 contain 到 thumbW×thumbW，居中绘制
             auto sz = bmp->GetPixelSize();
             if (sz.width > 0 && sz.height > 0) {
-                float s = (std::min)(thumbW / (float)sz.width, thumbW / (float)sz.height);
+                float s = (std::min)(S(thumbW) / (float)sz.width, S(thumbW) / (float)sz.height);
                 float dw = sz.width * s, dh = sz.height * s;
-                r.DrawBitmap(bmp, x + (thumbW - dw) * 0.5f, y + (thumbW - dh) * 0.5f,
+                r.DrawBitmap(bmp, x + (S(thumbW) - dw) * 0.5f, y + (S(thumbW) - dh) * 0.5f,
                     dw, dh, _thumbBarAlpha, D2D1_INTERPOLATION_MODE_LINEAR);
             }
         } else {
             // 尚未解码：占位灰块
-            r.FillRectangle(x, y, thumbW, thumbW, D2D1::ColorF(0.2f, 0.2f, 0.2f, bgAlpha));
+            r.FillRectangle(x, y, S(thumbW), S(thumbW), D2D1::ColorF(0.2f, 0.2f, 0.2f, bgAlpha));
         }
     }
 
@@ -837,13 +840,13 @@ int UIEngine::ThumbBarHitTest(int x, int y) {
     int cur = _thumbCurrent;
     int total = (int)_thumbFiles->size();
     constexpr float thumbW = 60.0f, gap = 8.0f;
-    float step = thumbW + gap;
+    float step = S(thumbW) + S(gap);
     float centerX = (_thumbBarRect.left + _thumbBarRect.right) * 0.5f;
-    int i = cur + (int)std::lround((x + thumbW * 0.5f - centerX) / step);
+    int i = cur + (int)std::lround((x + S(thumbW) * 0.5f - centerX) / step);
     if (i < 0 || i >= total) return -1;
     // 精确判断 x 是否落在该格子内（含 2px 容差）
-    float cellX = centerX + (i - cur) * step - thumbW * 0.5f;
-    if (x < cellX - 2 || x > cellX + thumbW + 2) return -1;
+    float cellX = centerX + (i - cur) * step - S(thumbW) * 0.5f;
+    if (x < cellX - 2 || x > cellX + S(thumbW) + 2) return -1;
     return i;
 }
 
@@ -867,12 +870,12 @@ void UIEngine::DrawBirdsEye(D2DRenderer& r) {
     // 鸟瞰图尺寸：最大 160，保持显示比例
     constexpr float beMax = 160.0f;
     float beW, beH;
-    if (dispW >= dispH) { beW = beMax; beH = (float)(beMax * dispH / dispW); }
-    else { beH = beMax; beW = (float)(beMax * dispW / dispH); }
-    float beX = (float)r.Width() - beW - 16;
+    if (dispW >= dispH) { beW = S(beMax); beH = (float)(S(beMax) * dispH / dispW); }
+    else { beH = S(beMax); beW = (float)(S(beMax) * dispW / dispH); }
+    float beX = (float)r.Width() - beW - S(16);
     // 底部避让：工具栏 + 缩略图条(随 alpha 联动显示时+88) + 10px margin（状态栏已移除）
-    float bottomReserve = _theme.toolbarHeight
-                          + _thumbBarAlpha * 88.0f + 10.0f;
+    float bottomReserve = S(_theme.toolbarHeight)
+                          + _thumbBarAlpha * S(88.0f) + S(10.0f);
     float beY = (float)r.Height() - bottomReserve - beH;
     _birdsEyeRect = { (int)beX, (int)beY, (int)(beX + beW), (int)(beY + beH) };
     _beImgX = beX; _beImgY = beY; _beImgW = beW; _beImgH = beH;

@@ -34,8 +34,12 @@ constexpr UINT     ANIM_TIMER_INTERVAL_MS = 30;  // 约 33fps 轮询
 // ─── WindowContext ───
 
 bool WindowContext::Create(int cmdShow, const std::wstring& path) {
-    if (!window.Create(L"Ark Viewer 2", 1280, 800)) return false;
+    // 窗口初始尺寸随 DPI 放大（高分屏 1280×800 设计值 → 物理像素）
+    UINT dpi = GetDpiForSystem();
+    float scale = dpi / 96.0f;
+    if (!window.Create(L"Ark Viewer 2", (int)(1280 * scale), (int)(800 * scale))) return false;
     if (!renderer.Initialize() || !renderer.Attach(window.Handle())) return false;
+    ui.SetDpiScale(scale);   // UI 布局/字号随 DPI 缩放
     ui.Initialize(renderer.DWrite());
     // GIF 控制面板位置从配置恢复（-1=默认右下角）
     {
@@ -1384,8 +1388,9 @@ void WindowContext::ShowHamburgerMenu() {
     // 汉堡按钮在标题栏右侧第 5 个位置，菜单在其下方弹出
     RECT rc;
     GetWindowRect(window.Handle(), &rc);
-    int sx = rc.right - (int)UI_TITLEBAR_HEIGHT * 5;  // 汉堡按钮左侧
-    int sy = rc.top + (int)UI_TITLEBAR_HEIGHT;        // 标题栏底部
+    float dpiScale = ui.DpiScale();
+    int sx = rc.right - (int)(UI_TITLEBAR_HEIGHT * dpiScale) * 5;  // 汉堡按钮左侧
+    int sy = rc.top + (int)(UI_TITLEBAR_HEIGHT * dpiScale);        // 标题栏底部
 
     HMENU hMenu = CreatePopupMenu();
     SetupMenuInfo(hMenu);

@@ -30,6 +30,8 @@ struct ViewportInfo {
 };
 
 // 自绘标题栏高度（须与 PlatformWindow::TITLEBAR_HEIGHT 一致；Prism 35px）
+// 运行时按 DPI scale 放大：UI 尺寸统一走 UIEngine::S()（物理像素 × DPI/96）
+// 保留 46.0f 作为基准设计值，实际高度 = UIEngine::S(UI_TITLEBAR_HEIGHT)
 constexpr float UI_TITLEBAR_HEIGHT = 46.0f;  // 与工具栏 toolbarHeight 一致
 
 // Prism 配色体系（深色系，参考 MainWindow.xaml）
@@ -63,6 +65,13 @@ public:
     ~UIEngine();
 
     void Initialize(IDWriteFactory* dwrite);
+
+    // ── DPI 缩放 ──
+    // 高分屏（2K/4K）下 UI 尺寸×DPI/96。WindowManager 在窗口创建后调用。
+    void SetDpiScale(float s) { _dpiScale = s; }
+    float DpiScale() const { return _dpiScale; }
+    // 设计值（96 DPI 基准）→ 当前 DPI 物理像素
+    float S(float v) const { return v * _dpiScale; }
 
     // 每一帧在 D2D DeviceContext 上绘制 UI
     void Draw(D2DRenderer& renderer);
@@ -149,6 +158,8 @@ private:
     IDWriteTextFormat* _textFormat  = nullptr;
     IDWriteTextFormat* _smallFormat = nullptr;
     UITheme _theme;
+    // DPI 缩放因子（DPI/96）：高分屏 UI 尺寸放大用；默认 1.0（96 DPI = 100% 缩放）
+    float _dpiScale = 1.0f;
 
     std::wstring _statusText;
     std::wstring _zoomText;

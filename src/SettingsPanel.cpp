@@ -19,6 +19,10 @@ void SettingsPanel::Show(HWND parent) {
     _parent = parent;
     _cfg = Config::Instance().Get();
 
+    // DPI 缩放：取父窗口所在显示器的 DPI（Per-Monitor V2 下各窗口独立）
+    UINT dpi = GetDpiForWindow(parent);
+    _s = dpi / 96.0f;
+
     // 加载文件关联状态
     _assocs.clear();
     for (const auto& e : SupportedExtensions()) {
@@ -38,25 +42,26 @@ void SettingsPanel::Show(HWND parent) {
         registered = true;
     }
 
-    // 居中创建窗口
+    // 居中创建窗口（尺寸随 DPI 放大）
     int sw = GetSystemMetrics(SM_CXSCREEN);
     int sh = GetSystemMetrics(SM_CYSCREEN);
-    int x = (sw - WIN_W) / 2;
-    int y = (sh - WIN_H) / 2;
+    int winW = S(WIN_W), winH = S(WIN_H);
+    int x = (sw - winW) / 2;
+    int y = (sh - winH) / 2;
     _hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, L"ArkSettingsPanel", L"设置",
-        WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, WIN_W, WIN_H,
+        WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, winW, winH,
         parent, nullptr, GetModuleHandleW(nullptr), this);
 
-    // D2D 初始化 + 字体
+    // D2D 初始化 + 字体（字号随 DPI 放大）
     _r.Initialize();
     _r.Attach(_hwnd);
     if (auto* dw = _r.DWrite()) {
         dw->CreateTextFormat(L"Microsoft YaHei", nullptr,
             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"zh-CN", &_font);
+            DWRITE_FONT_STRETCH_NORMAL, S(14.0f), L"zh-CN", &_font);
         dw->CreateTextFormat(L"Microsoft YaHei", nullptr,
             DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_STRETCH_NORMAL, 12.0f, L"zh-CN", &_smallFont);
+            DWRITE_FONT_STRETCH_NORMAL, S(12.0f), L"zh-CN", &_smallFont);
         if (_font) _font->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         if (_smallFont) _smallFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     }
@@ -140,20 +145,20 @@ void SettingsPanel::DrawTextVCenter(const wchar_t* text, float x, float y,
 }
 
 void SettingsPanel::DrawCheck(float x, float y, bool on, bool hover) {
-    float sz = 16;
+    float sz = S(16);
     _r.FillRectangle(x, y, sz, sz, Cf(0x1A, 0x1A, 0x1A));
     _r.DrawRectangle(x, y, sz, sz, hover ? Cf(0x90, 0xC2, 0x08) : Cf(0x55, 0x55, 0x55), 1.0f);
     if (on) {
-        _r.FillRectangle(x + 2, y + 2, sz - 4, sz - 4, Cf(0x90, 0xC2, 0x08));
+        _r.FillRectangle(x + S(2), y + S(2), sz - S(4), sz - S(4), Cf(0x90, 0xC2, 0x08));
         // 白色对勾（直接在当前 BeginDraw 上下文中绘制）
         auto* ctx = _r.Context();
         if (ctx) {
             ComPtr<ID2D1SolidColorBrush> wb;
             ctx->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1), &wb);
             if (wb) {
-                ctx->DrawLine(D2D1::Point2F(x + 3, y + 8), D2D1::Point2F(x + 6, y + 11),
+                ctx->DrawLine(D2D1::Point2F(x + S(3), y + S(8)), D2D1::Point2F(x + S(6), y + S(11)),
                     wb.Get(), 2.0f);
-                ctx->DrawLine(D2D1::Point2F(x + 6, y + 11), D2D1::Point2F(x + 12, y + 4),
+                ctx->DrawLine(D2D1::Point2F(x + S(6), y + S(11)), D2D1::Point2F(x + S(12), y + S(4)),
                     wb.Get(), 2.0f);
             }
         }
@@ -161,7 +166,7 @@ void SettingsPanel::DrawCheck(float x, float y, bool on, bool hover) {
 }
 
 void SettingsPanel::DrawRadio(float x, float y, bool on, bool hover) {
-    float sz = 16;
+    float sz = S(16);
     float cx = x + sz / 2, cy = y + sz / 2, r = sz / 2 - 1;
     _r.FillCircle(cx, cy, r, Cf(0x1A, 0x1A, 0x1A));
     auto* ctx = _r.Context();
@@ -173,17 +178,17 @@ void SettingsPanel::DrawRadio(float x, float y, bool on, bool hover) {
             ctx->DrawEllipse(&e, pb.Get(), 1.0f);
         }
     }
-    if (on) _r.FillCircle(cx, cy, 4, Cf(0x90, 0xC2, 0x08));
+    if (on) _r.FillCircle(cx, cy, S(4), Cf(0x90, 0xC2, 0x08));
 }
 
 void SettingsPanel::DrawSection(float x, float y, float w, const wchar_t* title) {
     if (_smallFont) {
         _smallFont->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        _r.DrawText(title, wcslen(title), _smallFont.Get(), x, y, w, 24, Cf(0x88, 0x88, 0x88));
+        _r.DrawText(title, wcslen(title), _smallFont.Get(), x, y, w, S(24), Cf(0x88, 0x88, 0x88));
         _smallFont->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     }
     // 分隔线
-    _r.FillRectangle(x, y + 24, w, 1, Cf(0x44, 0x44, 0x44));
+    _r.FillRectangle(x, y + S(24), w, 1, Cf(0x44, 0x44, 0x44));
 }
 
 // ─── 主绘制 ───
@@ -194,100 +199,101 @@ void SettingsPanel::Paint() {
 
     int W = _r.Width(), H = _r.Height();
     float fw = (float)W, fh = (float)H;
+    int navW = S(NAV_W), tabH = S(TAB_H), rowH = S(ROW_H);
 
     // ── 左侧导航栏 ──
-    _r.FillRectangle(0, 0, NAV_W, fh, Cf(0x25, 0x25, 0x25));
+    _r.FillRectangle(0, 0, navW, fh, Cf(0x25, 0x25, 0x25));
     for (int i = 0; i < 3; i++) {
-        float y = i * TAB_H;
-        _navR[i] = { 0, y, (float)NAV_W, (float)TAB_H };
+        float y = i * tabH;
+        _navR[i] = { 0, y, (float)navW, (float)tabH };
         bool sel = (_tab == i), hov = (_hoverId == i);
-        _r.FillRectangle(0, y, NAV_W, TAB_H,
+        _r.FillRectangle(0, y, navW, tabH,
             sel ? Cf(0x33, 0x33, 0x33) : (hov ? Cf(0x2C, 0x2C, 0x2C) : Cf(0x25, 0x25, 0x25)));
-        if (sel) _r.FillRectangle(0, y, 3, TAB_H, Cf(0x90, 0xC2, 0x08));  // 左侧竖条
-        DrawTextVCenter(kTabLabels[i], 16, y, NAV_W - 16, TAB_H,
+        if (sel) _r.FillRectangle(0, y, S(3), tabH, Cf(0x90, 0xC2, 0x08));  // 左侧竖条
+        DrawTextVCenter(kTabLabels[i], S(16), y, navW - S(16), tabH,
             sel ? Cf(0xFF, 0xFF, 0xFF) : Cf(0xCC, 0xCC, 0xCC), _font.Get());
     }
-    _r.FillRectangle(NAV_W, 0, 1, fh, Cf(0x44, 0x44, 0x44));  // 分隔线
+    _r.FillRectangle(navW, 0, 1, fh, Cf(0x44, 0x44, 0x44));  // 分隔线
 
     // ── 内容区 ──
-    float cx = NAV_W + 1;
+    float cx = navW + 1;
     float cw = fw - cx;
 
     if (_tab == 0) {
         // 常规页
-        float y = 16;
-        DrawSection(cx + 16, y, cw - 32, L"文件夹穿透策略"); y += 36;
+        float y = S(16);
+        DrawSection(cx + S(16), y, cw - S(32), L"文件夹穿透策略"); y += S(36);
         const wchar_t* navOpts[] = { L"本文件夹循环", L"进入下个文件夹", L"提示是否进入下个文件夹" };
         for (int i = 0; i < 3; i++) {
-            DrawRadio(cx + 20, y + 7, _cfg.folderNavPolicy == i, _hoverId == 10 + i);
-            DrawTextVCenter(navOpts[i], cx + 44, y, cw - 60, ROW_H, Cf(0xCC, 0xCC, 0xCC), _font.Get());
-            y += ROW_H;
+            DrawRadio(cx + S(20), y + S(7), _cfg.folderNavPolicy == i, _hoverId == 10 + i);
+            DrawTextVCenter(navOpts[i], cx + S(44), y, cw - S(60), rowH, Cf(0xCC, 0xCC, 0xCC), _font.Get());
+            y += rowH;
         }
-        y += 10;
-        DrawSection(cx + 16, y, cw - 32, L"视图"); y += 36;
+        y += S(10);
+        DrawSection(cx + S(16), y, cw - S(32), L"视图"); y += S(36);
         const wchar_t* viewOpts[] = { L"鸟瞰图", L"缩略图条" };
         bool viewVal[] = { _cfg.birdsEyeVisible, _cfg.thumbnailBarVisible };
         for (int i = 0; i < 2; i++) {
-            DrawCheck(cx + 20, y + 7, viewVal[i], _hoverId == 20 + i);
-            DrawTextVCenter(viewOpts[i], cx + 44, y, cw - 60, ROW_H, Cf(0xCC, 0xCC, 0xCC), _font.Get());
-            y += ROW_H;
+            DrawCheck(cx + S(20), y + S(7), viewVal[i], _hoverId == 20 + i);
+            DrawTextVCenter(viewOpts[i], cx + S(44), y, cw - S(60), rowH, Cf(0xCC, 0xCC, 0xCC), _font.Get());
+            y += rowH;
         }
     } else if (_tab == 1) {
         // 习惯页
-        float y = 16;
-        DrawSection(cx + 16, y, cw - 32, L"看图窗口使用习惯"); y += 36;
+        float y = S(16);
+        DrawSection(cx + S(16), y, cw - S(32), L"看图窗口使用习惯"); y += S(36);
         const wchar_t* habitOpts[] = { L"窗口总是置顶于所有窗口最前面", L"允许打开多个看图窗口" };
         bool habitVal[] = { _cfg.alwaysOnTop, _cfg.allowMultipleWindows };
         for (int i = 0; i < 2; i++) {
-            DrawCheck(cx + 20, y + 7, habitVal[i], _hoverId == 30 + i);
-            DrawTextVCenter(habitOpts[i], cx + 44, y, cw - 60, ROW_H, Cf(0xCC, 0xCC, 0xCC), _font.Get());
-            y += ROW_H;
+            DrawCheck(cx + S(20), y + S(7), habitVal[i], _hoverId == 30 + i);
+            DrawTextVCenter(habitOpts[i], cx + S(44), y, cw - S(60), rowH, Cf(0xCC, 0xCC, 0xCC), _font.Get());
+            y += rowH;
         }
-        y += 10;
-        DrawSection(cx + 16, y, cw - 32, L"滚轮行为"); y += 36;
+        y += S(10);
+        DrawSection(cx + S(16), y, cw - S(32), L"滚轮行为"); y += S(36);
         const wchar_t* wheelOpts[] = { L"滚轮缩放", L"滚轮切换图片" };
         for (int i = 0; i < 2; i++) {
-            DrawRadio(cx + 20, y + 7, _cfg.wheelBehavior == i, _hoverId == 40 + i);
-            DrawTextVCenter(wheelOpts[i], cx + 44, y, cw - 60, ROW_H, Cf(0xCC, 0xCC, 0xCC), _font.Get());
-            y += ROW_H;
+            DrawRadio(cx + S(20), y + S(7), _cfg.wheelBehavior == i, _hoverId == 40 + i);
+            DrawTextVCenter(wheelOpts[i], cx + S(44), y, cw - S(60), rowH, Cf(0xCC, 0xCC, 0xCC), _font.Get());
+            y += rowH;
         }
     } else {
         // 文件关联页
-        float y = 16;
+        float y = S(16);
         bool allOn = !_assocs.empty();
         for (auto& a : _assocs) if (!a.on) { allOn = false; break; }
-        _allR = { cx + 16, y, cw - 32, (float)ROW_H };
-        DrawCheck(cx + 16, y + 7, allOn, _hoverId == 50);
-        DrawTextVCenter(L"全选 / 全不选", cx + 40, y, cw - 60, ROW_H, Cf(0xCC, 0xCC, 0xCC), _font.Get());
-        y += ROW_H + 4;
+        _allR = { cx + S(16), y, cw - S(32), (float)rowH };
+        DrawCheck(cx + S(16), y + S(7), allOn, _hoverId == 50);
+        DrawTextVCenter(L"全选 / 全不选", cx + S(40), y, cw - S(60), rowH, Cf(0xCC, 0xCC, 0xCC), _font.Get());
+        y += rowH + S(4);
 
         // 列表区域
-        _listR = { cx + 16, y, cw - 32, fh - y - 50 };
+        _listR = { cx + S(16), y, cw - S(32), fh - y - S(50) };
         // 裁剪
         _r.Context()->PushAxisAlignedClip(
             D2D1::RectF(_listR.x, _listR.y, _listR.x + _listR.w, _listR.y + _listR.h),
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         _r.FillRectangle(_listR.x, _listR.y, _listR.w, _listR.h, Cf(0x25, 0x25, 0x25));
 
-        int rowH = LIST_ROW_H;
-        int first = _assocScroll / rowH;
+        int lrowH = S(LIST_ROW_H);
+        int first = _assocScroll / lrowH;
         if (first < 0) first = 0;
-        int visCnt = (int)(_listR.h / rowH) + 2;
+        int visCnt = (int)(_listR.h / lrowH) + 2;
         for (int i = first; i < (int)_assocs.size() && i < first + visCnt; i++) {
-            float iy = _listR.y + i * rowH - _assocScroll;
-            if (iy + rowH < _listR.y || iy > _listR.y + _listR.h) continue;
+            float iy = _listR.y + i * lrowH - _assocScroll;
+            if (iy + lrowH < _listR.y || iy > _listR.y + _listR.h) continue;
             if (_hoverId == 100 + i)
-                _r.FillRectangle(_listR.x, iy, _listR.w, rowH, Cf(0x33, 0x33, 0x33));
-            DrawCheck(_listR.x + 8, iy + (rowH - 16) / 2, _assocs[i].on, _hoverId == 100 + i);
-            DrawTextVCenter(_assocs[i].ext.c_str(), _listR.x + 32, iy, _listR.w - 40, rowH,
+                _r.FillRectangle(_listR.x, iy, _listR.w, lrowH, Cf(0x33, 0x33, 0x33));
+            DrawCheck(_listR.x + S(8), iy + (lrowH - S(16)) / 2, _assocs[i].on, _hoverId == 100 + i);
+            DrawTextVCenter(_assocs[i].ext.c_str(), _listR.x + S(32), iy, _listR.w - S(40), lrowH,
                 Cf(0xCC, 0xCC, 0xCC), _smallFont.Get());
         }
         _r.Context()->PopAxisAlignedClip();
 
         // 滚动条
-        int totalH = (int)_assocs.size() * rowH;
+        int totalH = (int)_assocs.size() * lrowH;
         if (totalH > _listR.h) {
-            float sbW = 6;
+            float sbW = S(6);
             float sbX = _listR.x + _listR.w - sbW;
             _r.FillRectangle(sbX, _listR.y, sbW, _listR.h, Cf(0x33, 0x33, 0x33));
             float thumbH = _listR.h * _listR.h / totalH;
@@ -298,16 +304,17 @@ void SettingsPanel::Paint() {
     }
 
     // ── 确定按钮 ──
-    float bx = fw - BTN_W - 16;
-    float by = fh - BTN_H - 12;
-    _okR = { bx, by, (float)BTN_W, (float)BTN_H };
-    _r.FillRectangle(bx, by, BTN_W, BTN_H,
+    int btnW = S(BTN_W), btnH = S(BTN_H);
+    float bx = fw - btnW - S(16);
+    float by = fh - btnH - S(12);
+    _okR = { bx, by, (float)btnW, (float)btnH };
+    _r.FillRectangle(bx, by, btnW, btnH,
         _pressedOk ? Cf(0x90, 0xC2, 0x08) : (_hoverId == 1000 ? Cf(0x44, 0x44, 0x44) : Cf(0x38, 0x38, 0x38)));
-    _r.DrawRectangle(bx, by, BTN_W, BTN_H, Cf(0x55, 0x55, 0x55), 1.0f);
+    _r.DrawRectangle(bx, by, btnW, btnH, Cf(0x55, 0x55, 0x55), 1.0f);
     if (_font) {
         _font->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         _font->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        _r.DrawText(L"确定", 2, _font.Get(), bx, by, BTN_W, BTN_H,
+        _r.DrawText(L"确定", 2, _font.Get(), bx, by, btnW, btnH,
             _pressedOk ? Cf(0x1A, 0x1A, 0x1A) : Cf(0xCC, 0xCC, 0xCC));
         _font->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         _font->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -327,44 +334,45 @@ int SettingsPanel::HitTest(int x, int y) {
     // 确定按钮
     if (inRect(_okR)) return 1000;
 
-    float cx = NAV_W + 1;
+    float cx = S(NAV_W) + 1;
     float cw = (float)_r.Width() - cx;
     // 选项命中区域：内容区内 x ∈ [cx+16, cx+cw-16]
-    bool inContentX = (x >= cx + 16 && x < cx + cw - 16);
+    bool inContentX = (x >= cx + S(16) && x < cx + cw - S(16));
+    int rowH = S(ROW_H);
 
     if (_tab == 0) {
         // 常规页：穿透单选 10-12，视图复选 20-21
         if (inContentX) {
-            float yBase = 16 + 36;  // 穿透单选起始 y
+            float yBase = S(16) + S(36);  // 穿透单选起始 y
             for (int i = 0; i < 3; i++) {
-                float ry = yBase + i * ROW_H;
-                if (y >= ry && y < ry + ROW_H) return 10 + i;
+                float ry = yBase + i * rowH;
+                if (y >= ry && y < ry + rowH) return 10 + i;
             }
-            yBase = 16 + 36 + 3 * ROW_H + 10 + 36;  // 视图复选起始 y
+            yBase = S(16) + S(36) + 3 * rowH + S(10) + S(36);  // 视图复选起始 y
             for (int i = 0; i < 2; i++) {
-                float ry = yBase + i * ROW_H;
-                if (y >= ry && y < ry + ROW_H) return 20 + i;
+                float ry = yBase + i * rowH;
+                if (y >= ry && y < ry + rowH) return 20 + i;
             }
         }
     } else if (_tab == 1) {
         // 习惯页：复选 30-31，单选 40-41
         if (inContentX) {
-            float yBase = 16 + 36;
+            float yBase = S(16) + S(36);
             for (int i = 0; i < 2; i++) {
-                float ry = yBase + i * ROW_H;
-                if (y >= ry && y < ry + ROW_H) return 30 + i;
+                float ry = yBase + i * rowH;
+                if (y >= ry && y < ry + rowH) return 30 + i;
             }
-            yBase = 16 + 36 + 2 * ROW_H + 10 + 36;
+            yBase = S(16) + S(36) + 2 * rowH + S(10) + S(36);
             for (int i = 0; i < 2; i++) {
-                float ry = yBase + i * ROW_H;
-                if (y >= ry && y < ry + ROW_H) return 40 + i;
+                float ry = yBase + i * rowH;
+                if (y >= ry && y < ry + rowH) return 40 + i;
             }
         }
     } else {
         // 文件关联页
         if (inRect(_allR)) return 50;
         if (inRect(_listR)) {
-            int idx = (int)((y - _listR.y + _assocScroll) / LIST_ROW_H);
+            int idx = (int)((y - _listR.y + _assocScroll) / S(LIST_ROW_H));
             if (idx >= 0 && idx < (int)_assocs.size()) return 100 + idx;
         }
     }
@@ -424,7 +432,7 @@ void SettingsPanel::Move(int x, int y) {
 
 void SettingsPanel::Wheel(int delta) {
     if (_tab != 2) return;  // 仅文件关联页滚动
-    int totalH = (int)_assocs.size() * LIST_ROW_H;
+    int totalH = (int)_assocs.size() * S(LIST_ROW_H);
     float maxScroll = totalH - _listR.h;
     if (maxScroll <= 0) return;
     _assocScroll -= delta;
