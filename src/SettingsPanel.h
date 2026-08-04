@@ -45,6 +45,8 @@ private:
     // 命中矩形（Paint 中更新，交互中使用）
     struct FRect { float x, y, w, h; };
     FRect _navR[3], _okR, _allR, _listR;
+    FRect _scaleR;              // 界面缩放滑块轨道
+    bool  _scaleDragging = false;  // 滑块拖动中
 
     // 元素 ID 编码（hover/click 统一用 ID）
     // 0-2: Tab 导航
@@ -53,8 +55,12 @@ private:
     // 30-31: 习惯页复选
     // 40-41: 习惯页滚轮单选
     // 50: 全选复选
+    // 60: 界面缩放滑块
     // 100+i: 列表项
     // 1000: 确定按钮
+
+    // 滑块 x → 缩放值 100-200
+    int XToScale(int x) const;
 
     void Paint();
     void DrawCheck(float x, float y, bool on, bool hover);

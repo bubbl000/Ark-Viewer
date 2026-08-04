@@ -16,6 +16,8 @@ struct AppConfig {
     bool allowMultipleWindows = true;  // 允许进程内打开多个看图窗口（默认 true 保留现有行为）
     int  gifPanelX = -1;              // GIF 控制面板位置（-1=默认右下角）
     int  gifPanelY = -1;
+    // 界面缩放（%）：100=默认（跟随系统 DPI），100~200 手动放大 UI/字号
+    int  uiScale = 100;
 };
 
 class Config {

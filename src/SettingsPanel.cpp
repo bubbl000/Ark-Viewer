@@ -191,6 +191,14 @@ void SettingsPanel::DrawSection(float x, float y, float w, const wchar_t* title)
     _r.FillRectangle(x, y + S(24), w, 1, Cf(0x44, 0x44, 0x44));
 }
 
+// 滑块 x → 界面缩放值 100-200（与 Paint 中 _scaleR 布局一致）
+int SettingsPanel::XToScale(int x) const {
+    if (_scaleR.w <= 0) return _cfg.uiScale;
+    float t = ((float)x - _scaleR.x) / _scaleR.w;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    return (int)(100 + t * 100 + 0.5f);
+}
+
 // ─── 主绘制 ───
 
 void SettingsPanel::Paint() {
@@ -238,6 +246,32 @@ void SettingsPanel::Paint() {
             DrawTextVCenter(viewOpts[i], cx + S(44), y, cw - S(60), rowH, Cf(0xCC, 0xCC, 0xCC), _font.Get());
             y += rowH;
         }
+        // ── 界面缩放滑块（100~200%，手动覆盖 DPI 自动缩放）──
+        y += S(10);
+        DrawSection(cx + S(16), y, cw - S(32), L"界面缩放"); y += S(36);
+        // 缩放值文本（右侧显示当前值 + %）
+        std::wstring scaleText = std::to_wstring(_cfg.uiScale) + L"%";
+        DrawTextVCenter(scaleText.c_str(), cx + S(44), y, S(50), rowH,
+            Cf(0xFF, 0xFF, 0xFF), _font.Get());
+        // 滑块轨道（左侧标签右侧起，宽 = 内容区 - 左侧预留 - 右侧数值区）
+        float trackX = cx + S(120), trackW = cw - S(120) - S(60);
+        float trackY = y + S(14);  // 轨道垂直居中于行
+        _scaleR = { trackX, trackY - S(6), trackW, S(12.0f) };
+        // 轨道（深色圆角矩形）
+        _r.FillRoundedRectangle(trackX, trackY, trackW, S(4), S(2), S(2), Cf(0x44, 0x44, 0x44));
+        // 已填充部分（accent 绿，0~当前值）
+        float fillW = trackW * (_cfg.uiScale - 100) / 100.0f;
+        if (fillW > 0)
+            _r.FillRoundedRectangle(trackX, trackY, fillW, S(4), S(2), S(2), Cf(0x90, 0xC2, 0x08));
+        // 滑块圆点（accent 绿，位置由缩放值决定）
+        float knobX = trackX + fillW;
+        float knobY = trackY + S(2);
+        _r.FillCircle(knobX, knobY, S(7),
+            _hoverId == 60 ? Cf(0x7A, 0xAD, 0x06) : Cf(0x90, 0xC2, 0x08));
+        _r.FillCircle(knobX, knobY, S(3), Cf(0x1E, 0x1E, 0x1E));  // 圆点内芯
+        // 提示文字（100% = 跟随系统，>100% 手动放大）
+        DrawTextVCenter(L"100% = 跟随系统缩放", cx + S(16), y + rowH + S(2), cw - S(32), S(18),
+            Cf(0x88, 0x88, 0x88), _smallFont.Get());
     } else if (_tab == 1) {
         // 习惯页
         float y = S(16);
@@ -341,7 +375,7 @@ int SettingsPanel::HitTest(int x, int y) {
     int rowH = S(ROW_H);
 
     if (_tab == 0) {
-        // 常规页：穿透单选 10-12，视图复选 20-21
+        // 常规页：穿透单选 10-12，视图复选 20-21，界面缩放滑块 60
         if (inContentX) {
             float yBase = S(16) + S(36);  // 穿透单选起始 y
             for (int i = 0; i < 3; i++) {
@@ -354,6 +388,9 @@ int SettingsPanel::HitTest(int x, int y) {
                 if (y >= ry && y < ry + rowH) return 20 + i;
             }
         }
+        // 滑块热区（轨道上下扩展 10px 便于点击）
+        if (x >= _scaleR.x - S(6) && x < _scaleR.x + _scaleR.w + S(6) &&
+            y >= _scaleR.y - S(10) && y < _scaleR.y + _scaleR.h + S(10)) return 60;
     } else if (_tab == 1) {
         // 习惯页：复选 30-31，单选 40-41
         if (inContentX) {
@@ -385,6 +422,13 @@ void SettingsPanel::LDown(int x, int y) {
     int id = HitTest(x, y);
     if (id == 1000) { _pressedOk = true; InvalidateRect(_hwnd, nullptr, FALSE); return; }
 
+    if (id == 60) {  // 滑块按下即跳到该位置，并开始拖动
+        _scaleDragging = true;
+        int v = XToScale(x);
+        if (v != _cfg.uiScale) { _cfg.uiScale = v; InvalidateRect(_hwnd, nullptr, FALSE); }
+        return;
+    }
+
     if (id >= 0 && id <= 2) { _tab = id; _hoverId = -1; InvalidateRect(_hwnd, nullptr, FALSE); return; }
 
     if (id >= 10 && id <= 12) { _cfg.folderNavPolicy = id - 10; InvalidateRect(_hwnd, nullptr, FALSE); return; }
@@ -413,6 +457,7 @@ void SettingsPanel::LDown(int x, int y) {
 }
 
 void SettingsPanel::LUp(int x, int y) {
+    if (_scaleDragging) { _scaleDragging = false; return; }
     if (_pressedOk) {
         _pressedOk = false;
         int id = HitTest(x, y);
@@ -423,6 +468,11 @@ void SettingsPanel::LUp(int x, int y) {
 }
 
 void SettingsPanel::Move(int x, int y) {
+    if (_scaleDragging) {
+        int v = XToScale(x);
+        if (v != _cfg.uiScale) { _cfg.uiScale = v; InvalidateRect(_hwnd, nullptr, FALSE); }
+        return;
+    }
     int id = HitTest(x, y);
     if (id != _hoverId) {
         _hoverId = id;
@@ -454,6 +504,9 @@ void SettingsPanel::Apply() {
     // 置顶变化 → 应用到所有窗口
     if (_cfg.alwaysOnTop != prevTop)
         WindowManager::Instance().ApplyAlwaysOnTop(_cfg.alwaysOnTop);
+
+    // 界面缩放变化 → 重算所有窗口 scale + 重建字体，立即生效
+    WindowManager::Instance().ApplyUiScale();
 
     // 文件关联：对比当前注册状态，增删关联
     for (const auto& a : _assocs) {

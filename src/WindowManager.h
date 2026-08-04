@@ -102,6 +102,9 @@ public:
     // 置顶切换：对所有窗口设 HWND_TOPMOST / HWND_NOTOPMOST
     void ApplyAlwaysOnTop(bool on);
 
+    // 界面缩放变化（设置面板确定后）：重算所有窗口 scale + 重建字体，立即生效
+    void ApplyUiScale();
+
     size_t Count() const { return _windows.size(); }
 
 private:

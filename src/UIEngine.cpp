@@ -16,6 +16,15 @@ UIEngine::~UIEngine() {
 
 void UIEngine::Initialize(IDWriteFactory* dwrite) {
     _dwrite = dwrite;
+    ApplyScale();
+    CreateToolbarButtons();
+}
+
+// 按当前 _dpiScale 重建字体（初始化与设置面板缩放变化时共用）
+void UIEngine::ApplyScale() {
+    if (!_dwrite) return;
+    if (_textFormat)  { _textFormat->Release();  _textFormat = nullptr; }
+    if (_smallFormat) { _smallFormat->Release(); _smallFormat = nullptr; }
     // 字号按 DPI 缩放：高分屏放大字体（DWrite 矢量渲染，放大后依然清晰）
     _dwrite->CreateTextFormat(L"Microsoft YaHei", nullptr,
         DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -25,7 +34,6 @@ void UIEngine::Initialize(IDWriteFactory* dwrite) {
         DWRITE_FONT_STRETCH_NORMAL, S(11.0f), L"zh-CN", &_smallFormat);
     if (_textFormat)  _textFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     if (_smallFormat) _smallFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    CreateToolbarButtons();
 }
 
 void UIEngine::SetStatusText(const std::wstring& t) { _statusText = t; }

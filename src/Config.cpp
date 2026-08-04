@@ -58,6 +58,10 @@ bool Config::Load() {
     _cfg.allowMultipleWindows = extractBool(L"allowMultipleWindows", true);
     _cfg.gifPanelX = extractInt(L"gifPanelX", -1);
     _cfg.gifPanelY = extractInt(L"gifPanelY", -1);
+    _cfg.uiScale = extractInt(L"uiScale", 100);
+    // 范围钳制：100~200%，防手改配置非法值
+    if (_cfg.uiScale < 100) _cfg.uiScale = 100;
+    if (_cfg.uiScale > 200) _cfg.uiScale = 200;
     return true;
 }
 
@@ -76,7 +80,8 @@ void Config::Save() {
     f << L"  \"alwaysOnTop\": " << (_cfg.alwaysOnTop ? L"true" : L"false") << L",\n";
     f << L"  \"allowMultipleWindows\": " << (_cfg.allowMultipleWindows ? L"true" : L"false") << L",\n";
     f << L"  \"gifPanelX\": " << _cfg.gifPanelX << L",\n";
-    f << L"  \"gifPanelY\": " << _cfg.gifPanelY << L"\n";
+    f << L"  \"gifPanelY\": " << _cfg.gifPanelY << L",\n";
+    f << L"  \"uiScale\": " << _cfg.uiScale << L"\n";
     f << L"}\n";
 }
 

@@ -72,6 +72,8 @@ public:
     float DpiScale() const { return _dpiScale; }
     // 设计值（96 DPI 基准）→ 当前 DPI 物理像素
     float S(float v) const { return v * _dpiScale; }
+    // 缩放因子变化后重建字体（字号 = 设计值 × scale），设置面板确定后调用
+    void ApplyScale();
 
     // 每一帧在 D2D DeviceContext 上绘制 UI
     void Draw(D2DRenderer& renderer);

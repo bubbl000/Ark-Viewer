@@ -34,12 +34,13 @@ constexpr UINT     ANIM_TIMER_INTERVAL_MS = 30;  // 约 33fps 轮询
 // ─── WindowContext ───
 
 bool WindowContext::Create(int cmdShow, const std::wstring& path) {
-    // 窗口初始尺寸随 DPI 放大（高分屏 1280×800 设计值 → 物理像素）
+    // 窗口初始尺寸随 DPI 缩放：系统 DPI 因子 × 用户手动界面缩放（100~200%）
     UINT dpi = GetDpiForSystem();
-    float scale = dpi / 96.0f;
+    auto& cfg = Config::Instance().Get();
+    float scale = (dpi / 96.0f) * (cfg.uiScale / 100.0f);
     if (!window.Create(L"Ark Viewer 2", (int)(1280 * scale), (int)(800 * scale))) return false;
     if (!renderer.Initialize() || !renderer.Attach(window.Handle())) return false;
-    ui.SetDpiScale(scale);   // UI 布局/字号随 DPI 缩放
+    ui.SetDpiScale(scale);   // UI 布局/字号随 DPI × 手动缩放
     ui.Initialize(renderer.DWrite());
     // GIF 控制面板位置从配置恢复（-1=默认右下角）
     {
@@ -1915,6 +1916,19 @@ void WindowManager::ApplyAlwaysOnTop(bool on) {
     for (auto& w : _windows) {
         SetWindowPos(w->window.Handle(), flag, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
+// 界面缩放变化（设置面板确定后）：重算所有窗口 scale + 重建字体，立即生效
+// scale = 系统 DPI 因子 × 用户手动缩放（100~200%），窗口尺寸不变（UI 元素缩放即可）
+void WindowManager::ApplyUiScale() {
+    auto& cfg = Config::Instance().Get();
+    UINT dpi = GetDpiForSystem();
+    float scale = (dpi / 96.0f) * (cfg.uiScale / 100.0f);
+    for (auto& w : _windows) {
+        w->ui.SetDpiScale(scale);
+        w->ui.ApplyScale();
+        InvalidateRect(w->window.Handle(), nullptr, FALSE);
     }
 }
 
