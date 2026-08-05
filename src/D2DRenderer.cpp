@@ -312,6 +312,40 @@ void D2DRenderer::DrawTextTrimmed(const wchar_t* text, size_t len,
     if (b) _d2dContext->DrawTextLayout(D2D1::Point2F(x, y), layout.Get(), b);
 }
 
+// straight alpha BGRA8 → premultiplied alpha
+// 快速路径：无任何半透明像素（alpha 全 255）时原样返回，避免大图拷贝开销
+const uint8_t* D2DRenderer::PremultiplyIfNeeded(const uint8_t* pixels, int w, int h,
+                                                int stride, std::vector<uint8_t>& out)
+{
+    // 检查是否存在 alpha < 255 的像素
+    bool hasAlpha = false;
+    for (int y = 0; y < h && !hasAlpha; y++) {
+        const uint8_t* row = pixels + (size_t)y * stride;
+        for (int x = 0; x < w; x++) {
+            if (row[x * 4 + 3] != 255) { hasAlpha = true; break; }
+        }
+    }
+    if (!hasAlpha) return pixels;  // 全不透明：零拷贝
+
+    // 有透明像素：逐像素预乘（color = color * alpha / 255）
+    out.resize((size_t)h * stride);
+    for (int y = 0; y < h; y++) {
+        const uint8_t* src = pixels + (size_t)y * stride;
+        uint8_t* dst = out.data() + (size_t)y * stride;
+        for (int x = 0; x < w; x++) {
+            uint8_t a = src[x * 4 + 3];
+            dst[x * 4 + 0] = (uint8_t)((uint32_t)src[x * 4 + 0] * a / 255);
+            dst[x * 4 + 1] = (uint8_t)((uint32_t)src[x * 4 + 1] * a / 255);
+            dst[x * 4 + 2] = (uint8_t)((uint32_t)src[x * 4 + 2] * a / 255);
+            dst[x * 4 + 3] = a;
+        }
+        // 行尾 padding（stride 可能 > w*4）原样复制
+        if (stride > w * 4)
+            memcpy(dst + w * 4, src + w * 4, (size_t)(stride - w * 4));
+    }
+    return out.data();
+}
+
 ComPtr<ID2D1Bitmap1> D2DRenderer::CreateBitmap(int w, int h,
     const uint8_t* pixels, int stride, bool isTarget)
 {
@@ -319,7 +353,9 @@ ComPtr<ID2D1Bitmap1> D2DRenderer::CreateBitmap(int w, int h,
 
     D2D1_BITMAP_PROPERTIES1 props = {};
     props.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
+    // 位图带 alpha（PNG/GIF 透明图）：必须 PREMULTIPLIED，否则透明信息被忽略
+    // （IGNORE 会把半透明当不透明、全透明显示成黑块）
+    props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
     props.bitmapOptions = isTarget
         ? D2D1_BITMAP_OPTIONS_TARGET
         : D2D1_BITMAP_OPTIONS_NONE;
@@ -332,7 +368,10 @@ ComPtr<ID2D1Bitmap1> D2DRenderer::CreateBitmap(int w, int h,
         D2D1_RECT_U rect = { 0, 0, (UINT32)w, (UINT32)h };
         HRESULT hr = _d2dContext->CreateBitmap(size, nullptr, 0, &props, &bitmap);
         if (SUCCEEDED(hr)) {
-            bitmap->CopyFromMemory(&rect, pixels, (UINT32)stride);
+            // straight alpha → premultiplied（D2D 位图要求预乘；解码器输出是 straight）
+            std::vector<uint8_t> premul;
+            const uint8_t* src = PremultiplyIfNeeded(pixels, w, h, stride, premul);
+            bitmap->CopyFromMemory(&rect, src, (UINT32)stride);
         }
     } else {
         _d2dContext->CreateBitmap(size, nullptr, 0, &props, &bitmap);
@@ -344,8 +383,11 @@ void D2DRenderer::UpdateBitmapRegion(ID2D1Bitmap1* bitmap,
     int dx, int dy, int w, int h, const uint8_t* pixels, int stride)
 {
     if (!bitmap || !pixels) return;
+    // 与 CreateBitmap 一致：瓦片像素 straight → premultiplied
+    std::vector<uint8_t> premul;
+    const uint8_t* src = PremultiplyIfNeeded(pixels, w, h, stride, premul);
     D2D1_RECT_U rect = { (UINT32)dx, (UINT32)dy, (UINT32)(dx + w), (UINT32)(dy + h) };
-    bitmap->CopyFromMemory(&rect, pixels, (UINT32)stride);
+    bitmap->CopyFromMemory(&rect, src, (UINT32)stride);
 }
 
 ComPtr<ID2D1Bitmap1> D2DRenderer::CreateStretchedBitmap(
@@ -356,7 +398,8 @@ ComPtr<ID2D1Bitmap1> D2DRenderer::CreateStretchedBitmap(
     // 创建目标纹理（作为 render target，不含 CANNOT_DRAW 故后续可作为 DrawBitmap 源）
     D2D1_BITMAP_PROPERTIES1 props = {};
     props.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
-    props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
+    // 拉伸中间纹理同样保留 alpha（源图带透明时拉伸结果也需带透明）
+    props.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
     props.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
     props.dpiX = 96.0f; props.dpiY = 96.0f;
 

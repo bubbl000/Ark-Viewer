@@ -1960,6 +1960,16 @@ WindowContext* WindowManager::CreateNewWindow(const std::wstring& path, int cmdS
         SetWindowPos(p->window.Handle(), HWND_TOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
+    // 置前激活：IPC 双击场景（资源管理器在前台）下窗口需提到最前并抢焦点。
+    // SetWindowPos(HWND_TOP) 不依赖前台权限，保证 Z 序置顶；SetForegroundWindow
+    // 在用户双击启动的进程内通常有权限，成功则同时获得键盘焦点。
+    {
+        HWND h = p->window.Handle();
+        SetWindowPos(h, HWND_TOP, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetForegroundWindow(h);
+        SetActiveWindow(h);
+    }
     return p;
 }
 

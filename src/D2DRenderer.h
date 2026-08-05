@@ -111,6 +111,11 @@ public:
     int                 Width()   const { return _width; }
     int                 Height()  const { return _height; }
 
+    // straight alpha BGRA8 → premultiplied：若全不透明（alpha 全 255）则原样返回（零拷贝），
+    // 否则写入 out 并返回 out.data()。D2D 位图要求预乘 alpha。
+    static const uint8_t* PremultiplyIfNeeded(const uint8_t* pixels, int w, int h, int stride,
+                                              std::vector<uint8_t>& out);
+
     // ── 颜色 ──
     static D2D1_COLOR_F MakeColor(float r, float g, float b, float a = 1.0f) {
         return D2D1::ColorF(r, g, b, a);
