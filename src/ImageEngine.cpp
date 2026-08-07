@@ -2254,18 +2254,28 @@ bool ImageEngine::ReadDisplayPixels(std::vector<uint8_t>& pixels, int& width, in
     props.dpiY = 96.0f;
     ComPtr<ID2D1Bitmap1> staging;
     HRESULT hr = _renderer->Context()->CreateBitmap(size, nullptr, 0, &props, &staging);
-    if (FAILED(hr) || !staging) return false;
+    if (FAILED(hr) || !staging) {
+        LOG_WARN_STREAM("SaveAs") << "ReadDisplayPixels CreateBitmap fail hr=" << std::hex << (long)hr
+            << " sz=" << size.width << "x" << size.height;
+        return false;
+    }
 
     // 从 GPU 纹理拷贝到 staging
     D2D1_POINT_2U dstPoint = { 0, 0 };
     D2D1_RECT_U srcRect = { 0, 0, size.width, size.height };
     hr = staging->CopyFromBitmap(&dstPoint, _sourceBitmap.Get(), &srcRect);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        LOG_WARN_STREAM("SaveAs") << "ReadDisplayPixels CopyFromBitmap fail hr=" << std::hex << (long)hr;
+        return false;
+    }
 
     // Map 读取像素（top-down，row 0 = 图片顶部）
     D2D1_MAPPED_RECT mapped = {};
     hr = staging->Map(D2D1_MAP_OPTIONS_READ, &mapped);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        LOG_WARN_STREAM("SaveAs") << "ReadDisplayPixels Map fail hr=" << std::hex << (long)hr;
+        return false;
+    }
     pixels.resize((size_t)mapped.pitch * height);
     memcpy(pixels.data(), mapped.bits, pixels.size());
     if (stride) *stride = (int)mapped.pitch;  // GPU pitch，可能 > width*4
@@ -2294,6 +2304,11 @@ bool ImageEngine::ReadSourcePixels(std::vector<uint8_t>& pixels, int& width, int
             pixels = std::move(result->pixels);
             return true;
         }
+        LOG_WARN_STREAM("SaveAs") << "ReadSourcePixels DecodeFull fail, _sourceBitmap="
+            << (_sourceBitmap ? "present" : "null");
+    } else {
+        LOG_WARN_STREAM("SaveAs") << "ReadSourcePixels no decoder/state, _sourceBitmap="
+            << (_sourceBitmap ? "present" : "null");
     }
     // 兜底：缓存命中且文件尚未打开时退化为显示分辨率（好过失败）
     return ReadDisplayPixels(pixels, width, height, &stride);

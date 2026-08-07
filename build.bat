@@ -7,7 +7,7 @@ echo === 清理旧构建目录 ===
 if exist "build" rmdir /s /q "build"
 
 echo === 配置 CMake (Release) ===
-cmake -B build -G Ninja -DCMAKE_MAKE_PROGRAM="C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe" -DCMAKE_CXX_COMPILER=cl.exe -DUSE_TURBOJPEG=OFF -DUSE_LIBWEBP=OFF -DUSE_LIBPNG=OFF -DCMAKE_BUILD_TYPE=Release
+cmake -B build -G Ninja -DCMAKE_MAKE_PROGRAM="C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe" -DCMAKE_CXX_COMPILER=cl.exe -DCMAKE_BUILD_TYPE=Release
 if %ERRORLEVEL% NEQ 0 goto error
 
 echo === 构建 ===
