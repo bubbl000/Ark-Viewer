@@ -26,6 +26,7 @@ resolve_offset.ps1
 test_thumb.cs
 
 # ── 内部文档（不公开）──
+CLAUDE.md
 adobe官方指导参考.md
 启动.md
 文档-*.md
