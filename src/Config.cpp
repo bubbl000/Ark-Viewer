@@ -62,6 +62,10 @@ bool Config::Load() {
     // 范围钳制：100~200%，防手改配置非法值
     if (_cfg.uiScale < 100) _cfg.uiScale = 100;
     if (_cfg.uiScale > 200) _cfg.uiScale = 200;
+    _cfg.checkerboard = extractBool(L"checkerboard", false);
+    _cfg.checkerboardOpacity = (int)extractInt(L"checkerboardOpacity", 100);
+    if (_cfg.checkerboardOpacity < 0) _cfg.checkerboardOpacity = 0;
+    if (_cfg.checkerboardOpacity > 100) _cfg.checkerboardOpacity = 100;
     return true;
 }
 
@@ -81,7 +85,9 @@ void Config::Save() {
     f << L"  \"allowMultipleWindows\": " << (_cfg.allowMultipleWindows ? L"true" : L"false") << L",\n";
     f << L"  \"gifPanelX\": " << _cfg.gifPanelX << L",\n";
     f << L"  \"gifPanelY\": " << _cfg.gifPanelY << L",\n";
-    f << L"  \"uiScale\": " << _cfg.uiScale << L"\n";
+    f << L"  \"uiScale\": " << _cfg.uiScale << L",\n";
+    f << L"  \"checkerboard\": " << (_cfg.checkerboard ? L"true" : L"false") << L",\n";
+    f << L"  \"checkerboardOpacity\": " << _cfg.checkerboardOpacity << L"\n";
     f << L"}\n";
 }
 

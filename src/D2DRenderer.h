@@ -73,6 +73,10 @@ public:
     // ── 直接渲染 UI ──
     void FillRectangle(float x, float y, float w, float h,
         D2D1_COLOR_F color);
+    // 棋盘格背景：在 (x,y,w,h) 矩形内平铺 cell 大小的亮/暗棋盘格
+    // 用于透明图片背景（图片绘制在其上，透明处露出棋盘格）
+    // alpha 0~1：棋盘格透明度（0 全透明不可见，1 不透明）
+    void DrawCheckerboard(float x, float y, float w, float h, float cell, float alpha = 1.0f);
     // 圆角矩形填充：rx/ry 为椭圆角半径（边缘导航按钮等贴边控件圆角化）
     void FillRoundedRectangle(float x, float y, float w, float h,
         float rx, float ry, D2D1_COLOR_F color);
@@ -86,6 +90,9 @@ public:
     void DrawTextTrimmed(const wchar_t* text, size_t len,
         IDWriteTextFormat* format, float x, float y, float w, float h,
         D2D1_COLOR_F color);
+    // 轴对齐裁剪：后续绘制限制在 (x,y,w,h) 矩形内（UI 面板防溢出），须成对调用
+    void PushClip(float x, float y, float w, float h);
+    void PopClip();
 
     // ── 创建 GPU 位图 ──
     // 从 CPU 像素数据创建 D2D 位图
@@ -134,6 +141,10 @@ private:
     bool    _initialized = false;
     ComPtr<ID2D1SolidColorBrush> _brushCache;
     D2D1_COLOR_F _lastBrushColor = {};
+    // 棋盘格平铺资源（懒创建，跨帧复用）
+    ComPtr<ID2D1Bitmap1>    _checkerBitmap;
+    ComPtr<ID2D1BitmapBrush> _checkerBrush;
+    float _checkerAlpha = -1.0f;  // 当前棋盘格透明度（-1=未初始化），变化时重建资源
     // 最近一次交互时间戳：EndDraw 据此判断是否在交互窗口内（200ms）
     std::chrono::steady_clock::time_point _lastInteractTick;
     ID2D1SolidColorBrush* GetCachedBrush(D2D1_COLOR_F color);

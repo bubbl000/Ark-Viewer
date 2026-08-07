@@ -50,6 +50,7 @@ void UIEngine::CreateToolbarButtons() {
         { IDM_VIEW_ROTATE_RIGHT, L"\u21BB" },  // ↻ 右组：右旋
         { IDM_ZOOM_FIT,          L"\u2194" },  // ↔ 右组：适应窗口
         { IDM_ZOOM_100,          L"1:1" },     // 右组：原始大小
+        { IDM_VIEW_GRID,         L"" },        // 右组：网格侧边栏（自绘四象限图标）
         { IDM_VIEW_MORE,         L"\u22EE" },  // ⋮ 右组：更多/设置
     };
     for (auto& b : buttons) {
@@ -58,6 +59,7 @@ void UIEngine::CreateToolbarButtons() {
 }
 
 void UIEngine::Draw(D2DRenderer& r) {
+    _winW = r.Width(); _winH = r.Height();  // 记录窗口尺寸（内容带判断用）
     if (_fullscreen) {
         // 全屏模式：工具栏在底部，鼠标移近底部显示工具栏
         int bottomZone = (int)_theme.toolbarHeight + 4;
@@ -77,6 +79,7 @@ void UIEngine::Draw(D2DRenderer& r) {
     if (_showExifPanel) DrawExifPanel(r);
     if (_showMorePanel) DrawMorePanel(r);
     DrawGifPanel(r);  // GIF 控制面板（_gifPanelVisible=false 时跳过）
+    if (_gridOpen) DrawGridPanel(r);  // 右侧缩略图侧边栏（最上层，盖住缩略图条/鸟瞰图，不盖上下工具栏）
 }
 
 // 边缘导航按钮（Prism 38×64）：默认 #44000000 半透明，hover 绿 #90C208
@@ -290,17 +293,30 @@ void UIEngine::DrawToolbar(D2DRenderer& r) {
                    lx, offsetY + (h - S(14)) / 2, S(90), S(14), _theme.textWeak);
     lx += S(90) + pad;  // 左组真实结束位置（供中间区域计算）
 
-    // ── 右组：↺左旋 ↻右旋 | 分隔线 | ↔适应 | 1:1 | ⋮更多 ──
+    // ── 右组：↺左旋 ↻右旋 | 分隔线 | ↔适应 | 1:1 | 网格 | ⋮更多 ──
     float rx = (float)(winW - pad);
     auto placeRight = [&](int id, const wchar_t* label) {
         rx -= bs;
         RECT rc = { (int)rx, btnY, (int)rx + bs, btnY + bs };
+        if (id == IDM_VIEW_GRID) {
+            // 网格侧边栏：自绘四象限图标，展开时 accent 高亮
+            bool hover = inRect(rc);
+            if (hover)
+                r.FillRectangle((float)rc.left, (float)rc.top, (float)bs, (float)bs, _theme.bgButtonHover);
+            D2D1_COLOR_F col = _gridOpen ? _theme.accent
+                            : (hover ? D2D1::ColorF(1, 1, 1, 1) : _theme.textPrimary);
+            DrawGridIcon(r, rc, col);
+            syncRect(id, rc);
+            rx -= pad;
+            return;
+        }
         drawToolBtn(rc, label);
         syncRect(id, rc);
         if (id == IDM_VIEW_MORE) _moreBtn = rc;  // 供 DrawMorePanel 锚定
         rx -= pad;
     };
     placeRight(IDM_VIEW_MORE,         L"\u22EE");  // 最右：更多/设置
+    placeRight(IDM_VIEW_GRID,         L"");        // 网格侧边栏（自绘四象限图标）
     placeRight(IDM_ZOOM_100,          L"1:1");
     placeRight(IDM_ZOOM_FIT,          L"\u2194");
     drawDivider(rx - 1); rx -= 1 + pad;
@@ -789,16 +805,16 @@ void UIEngine::DrawThumbBar(D2DRenderer& r) {
     r.FillRectangle(0, barY, (float)winW, S(barH), D2D1::ColorF(0.1f, 0.1f, 0.1f, bgAlpha));
     _thumbBarRect = { 0, (int)barY, winW, (int)(barY + S(barH)) };
 
-    // 取/建索引 i 的顶层缩略图 GPU 纹理（懒创建，复用 PreDecodeCache）
+    // 取/建索引 i 的缩略图 GPU 纹理（懒创建，复用共享缩略图缓存 _gridGet，兜底 PreDecodeCache）
     auto getTex = [&](int i) -> ID2D1Bitmap1* {
         auto it = _thumbTextures.find(i);
         if (it != _thumbTextures.end()) return it->second.Get();
-        if (_thumbCache) {
-            auto c = _thumbCache->Get(i);
-            if (c && c->pixels && !c->pixels->empty() && c->width > 0 && c->height > 0) {
-                auto tex = r.CreateBitmap(c->width, c->height, c->pixels->data(), c->stride);
-                if (tex) { _thumbTextures[i] = tex; return tex.Get(); }
-            }
+        std::shared_ptr<CachedImage> c;
+        if (_gridGet) c = _gridGet(i);            // 底部条/侧边栏共享缓存（80×110）
+        if (!c && _thumbCache) c = _thumbCache->Get(i);
+        if (c && c->pixels && !c->pixels->empty() && c->width > 0 && c->height > 0) {
+            auto tex = r.CreateBitmap(c->width, c->height, c->pixels->data(), c->stride);
+            if (tex) { _thumbTextures[i] = tex; return tex.Get(); }
         }
         return nullptr;
     };
@@ -850,15 +866,15 @@ int UIEngine::ThumbBarHitTest(int x, int y) {
     constexpr float thumbW = 60.0f, gap = 8.0f;
     float step = S(thumbW) + S(gap);
     float centerX = (_thumbBarRect.left + _thumbBarRect.right) * 0.5f;
-    int i = cur + (int)std::lround((x + S(thumbW) * 0.5f - centerX) / step);
+    // 用 floor 把格子划分为连续区间（每格宽 step=68），进入格子即命中，无死区
+    // 视觉缩略图在各自区段内居中（左偏移 gap/2），hover 在进入区段边界即响应
+    float base = centerX - S(thumbW) * 0.5f - cur * step;
+    int i = cur + (int)std::floor((x - base) / step);
     if (i < 0 || i >= total) return -1;
-    // 精确判断 x 是否落在该格子内（含 2px 容差）
-    float cellX = centerX + (i - cur) * step - S(thumbW) * 0.5f;
-    if (x < cellX - 2 || x > cellX + S(thumbW) + 2) return -1;
     return i;
 }
 
-void UIEngine::ClearThumbTextures() { _thumbTextures.clear(); }
+void UIEngine::ClearThumbTextures() { _thumbTextures.clear(); _gridTextures.clear(); }
 
 // ── 鸟瞰图 ──
 // 右下角小图，仅当图片显示超出视口（放大/平移后）才显示
@@ -975,4 +991,213 @@ bool UIEngine::BirdsEyeDrag(int x, int y, double& outPanDx, double& outPanDy) {
     outPanDx = wantOffsetX - _viewport.offsetX;
     outPanDy = wantOffsetY - _viewport.offsetY;
     return true;
+}
+
+// ── 右侧缩略图侧边栏（网格总览，仿 Ark Comic 全页缩略图侧边栏） ──
+
+// 工具栏网格按钮图标：四象限矩形（对应 SVG 四象限），水平+垂直居中于按钮
+void UIEngine::DrawGridIcon(D2DRenderer& r, const RECT& rc, D2D1_COLOR_F col) {
+    float margin = S(7.5f);      // 图标占按钮约 55%
+    float gap = S(2.5f);         // 象限间距
+    float cw = ((rc.right - rc.left) - margin * 2 - gap) / 2;
+    float ch = ((rc.bottom - rc.top) - margin * 2 - gap) / 2;
+    float ox = (float)rc.left + margin, oy = (float)rc.top + margin;
+    float sw = 1.5f;
+    r.DrawRectangle(ox, oy, cw, ch, col, sw);
+    r.DrawRectangle(ox + cw + gap, oy, cw, ch, col, sw);
+    r.DrawRectangle(ox, oy + ch + gap, cw, ch, col, sw);
+    r.DrawRectangle(ox + cw + gap, oy + ch + gap, cw, ch, col, sw);
+}
+
+// 计算侧边栏面板、每格矩形、滚动条位置；滚动偏移钳制到 [0, _gridMaxScroll]
+void UIEngine::LayoutGrid(int winW, int winH) {
+    constexpr float panelW = 312.0f;    // 面板宽度（容纳至少 3 列）
+    constexpr float panelMargin = 8.0f;
+    constexpr float pad = 10.0f;        // 面板内边距
+    constexpr float scrollW = 10.0f;    // 滚动条宽度
+    constexpr float cellW = 88.0f;      // 格子宽
+    constexpr float cellH = 108.0f;     // 格子高（含缩略图+边框）
+    float top = S(UI_TITLEBAR_HEIGHT) + S(panelMargin);
+    float bottom = (float)winH - S(_theme.toolbarHeight) - S(panelMargin);
+    float px = (float)winW - S(panelW) - S(panelMargin);
+    float pw = S(panelW), ph = bottom - top;
+    _gridPanelRect = { (int)px, (int)top, (int)(px + pw), (int)(top + ph) };
+
+    int total = _thumbFiles ? (int)_thumbFiles->size() : 0;
+    if (total <= 0) { _gridRects.clear(); _gridTrack = {}; _gridSlider = {}; _gridMaxScroll = 0; return; }
+
+    int cols = (int)((pw - S(pad) * 2 - S(scrollW)) / S(cellW));
+    if (cols < 1) cols = 1;
+    float contentW = (float)cols * S(cellW);
+    // 格区水平居中（避开滚动条），留出左右内边距
+    float ox = px + S(pad) + ((pw - S(pad) * 2 - S(scrollW) - contentW) * 0.5f);
+    int rows = (total + cols - 1) / cols;
+    float viewH = ph - S(pad) * 2;
+    float contentH = rows * S(cellH);
+    _gridMaxScroll = (std::max)(0.0f, contentH - viewH);
+    if (_gridScroll < 0) _gridScroll = 0;
+    if (_gridScroll > (int)_gridMaxScroll) _gridScroll = (int)_gridMaxScroll;
+
+    _gridRects.assign(total, {});
+    float contentTop = top + S(pad);
+    for (int i = 0; i < total; i++) {
+        int col = i % cols, row = i / cols;
+        float x = ox + col * S(cellW);
+        float y = contentTop + row * S(cellH) - _gridScroll;
+        _gridRects[i] = { (int)x, (int)y, (int)(x + S(cellW)), (int)(y + S(cellH)) };
+    }
+
+    // 滚动条：轨道贴右内边，滑块高度按可视/内容比例，位置按滚动比例
+    float trackX = px + pw - S(scrollW) - S(4);
+    float trackY = top + S(pad);
+    _gridTrack = { (int)trackX, (int)trackY, (int)(trackX + S(scrollW)), (int)(trackY + viewH) };
+    float sliderH = (viewH / (std::max)(viewH, contentH)) * viewH;
+    if (sliderH < S(20)) sliderH = S(20);
+    float maxTrack = viewH - sliderH;
+    float sliderY = trackY + (maxTrack > 0 ? maxTrack * (_gridScroll / (std::max)(1.0f, _gridMaxScroll)) : 0);
+    _gridSlider = { (int)trackX, (int)sliderY, (int)(trackX + S(scrollW)), (int)(sliderY + sliderH) };
+}
+
+void UIEngine::DrawGridPanel(D2DRenderer& r) {
+    if (!_gridOpen) return;
+    int winW = r.Width(), winH = r.Height();
+    LayoutGrid(winW, winH);
+    int total = _thumbFiles ? (int)_thumbFiles->size() : 0;
+    if (total <= 0) return;
+
+    float px = (float)_gridPanelRect.left, py = (float)_gridPanelRect.top;
+    float pw = (float)(_gridPanelRect.right - _gridPanelRect.left);
+    float ph = (float)(_gridPanelRect.bottom - _gridPanelRect.top);
+    // 面板背景（不透明深色，盖住其下的缩略图条/鸟瞰图）+ 边框
+    r.FillRectangle(px, py, pw, ph, _theme.menuBg);
+    r.DrawRectangle(px, py, pw, ph, _theme.border, 1.0f);
+
+    // 取/建网格缩略图纹理：优先全文件夹缓存（_gridGet），回退 PreDecodeCache，未解码返回 null → 占位块
+    auto getTex = [&](int i) -> ID2D1Bitmap1* {
+        auto it = _gridTextures.find(i);
+        if (it != _gridTextures.end()) return it->second.Get();
+        std::shared_ptr<CachedImage> c;
+        if (_gridGet) c = _gridGet(i);
+        if (!c && _thumbCache) c = _thumbCache->Get(i);
+        if (c && c->pixels && !c->pixels->empty() && c->width > 0 && c->height > 0) {
+            auto tex = r.CreateBitmap(c->width, c->height, c->pixels->data(), c->stride);
+            if (tex) { _gridTextures[i] = tex; return tex.Get(); }
+        }
+        return nullptr;
+    };
+
+    float viewTop = py + S(10), viewBottom = py + ph - S(10);
+    float cellPad = S(4);
+    r.PushClip(px, py, pw, ph);  // 裁到面板内：缩略图不越界，避免压住上下工具栏
+    for (int i = 0; i < total; i++) {
+        RECT& rc = _gridRects[i];
+        if (rc.bottom < (int)viewTop || rc.top > (int)viewBottom) continue;  // 裁剪不可见格
+        float x = (float)rc.left, y = (float)rc.top;
+        float cw = (float)(rc.right - rc.left), ch = (float)(rc.bottom - rc.top);
+        bool isCur = (i == _thumbCurrent);
+        bool isHover = (i == _gridHover) && !isCur;
+        // 边框：当前图 accent 绿 2px，hover 白半透 2px，其余 border 1px
+        D2D1_COLOR_F bc = isCur ? _theme.accent
+                        : (isHover ? D2D1::ColorF(1, 1, 1, 0.6f) : _theme.border);
+        r.DrawRectangle(x, y, cw, ch, bc, (isCur || isHover) ? 2.0f : 1.0f);
+        float tw = cw - cellPad * 2, th = ch - cellPad * 2;
+        if (ID2D1Bitmap1* bmp = getTex(i)) {
+            auto sz = bmp->GetPixelSize();
+            if (sz.width > 0 && sz.height > 0) {
+                // 等比缩放 contain 到格子内，居中绘制
+                float s = (std::min)(tw / (float)sz.width, th / (float)sz.height);
+                float dw = sz.width * s, dh = sz.height * s;
+                r.DrawBitmap(bmp, x + cellPad + (tw - dw) * 0.5f, y + cellPad + (th - dh) * 0.5f,
+                    dw, dh, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR);
+            }
+        } else {
+            // 尚未解码：占位灰块
+            r.FillRectangle(x + cellPad, y + cellPad, tw, th, D2D1::ColorF(0.2f, 0.2f, 0.2f, 1.0f));
+        }
+    }
+
+    // 滚动条：轨道半透明底 + 圆角滑块
+    r.FillRectangle((float)_gridTrack.left, (float)_gridTrack.top,
+        (float)(_gridTrack.right - _gridTrack.left), (float)(_gridTrack.bottom - _gridTrack.top),
+        D2D1::ColorF(1, 1, 1, 0.08f));
+    float slx = (float)_gridSlider.left, sly = (float)_gridSlider.top;
+    r.FillRoundedRectangle(slx, sly,
+        (float)(_gridSlider.right - _gridSlider.left), (float)(_gridSlider.bottom - _gridSlider.top),
+        S(5), S(5), D2D1::ColorF(1, 1, 1, 0.35f));
+    r.PopClip();
+
+    // 面板打开时淘汰可视范围外的纹理（保留余量供快速滚动复用）
+    int firstVis = 0, lastVis = total - 1;
+    for (int i = 0; i < total; i++)
+        if (_gridRects[i].bottom >= (int)viewTop) { firstVis = i; break; }
+    for (int i = total - 1; i >= 0; i--)
+        if (_gridRects[i].top <= (int)viewBottom) { lastVis = i; break; }
+    constexpr int keepRange = 20;
+    for (auto it = _gridTextures.begin(); it != _gridTextures.end(); ) {
+        if (it->first < firstVis - keepRange || it->first > lastVis + keepRange)
+            it = _gridTextures.erase(it);
+        else ++it;
+    }
+}
+
+// 命中缩略图：返回索引，-1=未命中（仅命中可见格子）
+int UIEngine::GridHitTest(int x, int y) const {
+    if (!_gridOpen || !_thumbFiles) return -1;
+    int total = (int)_thumbFiles->size();
+    int viewTop = _gridPanelRect.top + (int)S(10);
+    int viewBottom = _gridPanelRect.bottom - (int)S(10);
+    for (int i = 0; i < total; i++) {
+        const RECT& rc = _gridRects[i];
+        if (rc.bottom < viewTop || rc.top > viewBottom) continue;
+        if (x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom) return i;
+    }
+    return -1;
+}
+
+bool UIEngine::GridPanelHitTest(int x, int y) const {
+    if (!_gridOpen) return false;
+    return x >= _gridPanelRect.left && x < _gridPanelRect.right &&
+           y >= _gridPanelRect.top && y < _gridPanelRect.bottom;
+}
+
+bool UIEngine::GridScrollHitTest(int x, int y) const {
+    if (!_gridOpen) return false;
+    auto inRect = [&](const RECT& rc) {
+        return x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom;
+    };
+    return inRect(_gridTrack) || inRect(_gridSlider);
+}
+
+void UIEngine::GridScrollDragStart(int x, int y) {
+    _gridDragScroll = true;
+    _gridDragY = y;
+    _gridScrollStart = _gridScroll;
+}
+
+void UIEngine::GridScrollDrag(int x, int y) {
+    if (!_gridDragScroll) return;
+    int dy = y - _gridDragY;
+    float trackH = (float)(_gridTrack.bottom - _gridTrack.top);
+    float sliderH = (float)(_gridSlider.bottom - _gridSlider.top);
+    float maxTrack = trackH - sliderH;
+    if (maxTrack <= 0 || _gridMaxScroll <= 0) return;
+    int ns = _gridScrollStart + (int)(dy * (_gridMaxScroll / maxTrack));
+    _gridScroll = (std::clamp)(ns, 0, (int)_gridMaxScroll);
+}
+
+void UIEngine::GridScrollBy(int delta) {
+    // 每个滚轮档滚动约一行，上滚（delta>0）减少偏移
+    int step = (int)S(108.0f);
+    _gridScroll = (std::clamp)(_gridScroll - (delta > 0 ? step : -step), 0, (int)_gridMaxScroll);
+}
+
+bool UIEngine::UpdateGridHover(int x, int y) {
+    int h = GridHitTest(x, y);
+    if (h != _gridHover) { _gridHover = h; return true; }
+    return false;
+}
+
+bool UIEngine::GridContentBand(int x, int y) const {
+    // 标题栏之下、工具栏之上的内容带（点击面板外关闭侧边栏用）
+    return y >= (int)S(UI_TITLEBAR_HEIGHT) && y < (int)(_winH - S(_theme.toolbarHeight));
 }

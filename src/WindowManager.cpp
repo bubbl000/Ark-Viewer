@@ -23,6 +23,9 @@
 #include <dwmapi.h>     // DwmSetWindowAttribute（设置弹窗深色标题栏）
 #include <uxtheme.h>    // SetWindowTheme（禁用控件 visual styles 用经典深色样式）
 #include <algorithm>
+#include <thread>
+#include <mutex>
+#include <objbase.h>   // CoInitializeEx（网格缩略图生成线程 WIC 需要）
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
@@ -74,7 +77,92 @@ void WindowContext::LoadPath(const std::wstring& path) {
     window.SetTitle((L"Ark Viewer 2 - " + fname).c_str());
     ui.SetTitleText(fname);  // 自绘标题栏显示文件名
     ui.SetStatusText(L"已加载: " + path);
+    UpdateGridGen();  // 打开即触发共享缩略图生成（底部条/侧边栏共用）
     window.Invalidate();
+}
+
+// 销毁：停止并回收侧边栏缩略图生成线程
+WindowContext::~WindowContext() {
+    _gridStop = true;
+    _gridCv.notify_all();
+    if (_gridThread.joinable()) _gridThread.join();
+}
+
+// 触发/更新全文件夹缩略图生成（底部条 + 侧边栏共享缓存，主线程调用）
+// 目录变化则清缓存重建；索引变化则更新基准并唤醒后台线程（当前页优先）
+// 始终运行（不依赖侧边栏是否展开），保证底部缩略图条也有全文件夹小图
+void WindowContext::UpdateGridGen() {
+    const auto& files = imageEngine.GetDirFiles();
+    if (files.empty()) return;
+    int cur = imageEngine.CurrentIndex();
+    {
+        std::lock_guard lock(_gridMutex);
+        if (_gridGenFiles != files) {   // 目录变化：清空缓存 + 作废 UI 缩略图纹理
+            _gridCache.clear();
+            _gridGenFiles = files;
+            ui.ClearThumbTextures();
+        }
+        _gridGenCurrent = cur;
+        _gridDirty = true;
+    }
+    _gridCv.notify_one();
+    if (!_gridThread.joinable()) {      // 首次调用时启动生成线程
+        _gridStop = false;
+        _gridThread = std::thread(&WindowContext::GridGenLoop, this);
+    }
+}
+
+// 后台线程：顺序生成全部缩略图（当前页优先，再近→远），每张生成即触发重绘渐进填充
+void WindowContext::GridGenLoop() {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);  // WIC 解码需要 COM
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);  // 不抢瓦片解码
+    while (!_gridStop.load()) {
+        std::vector<std::wstring> files;
+        int cur;
+        {
+            std::unique_lock lock(_gridMutex);
+            _gridCv.wait(lock, [this] { return _gridStop.load() || _gridDirty.load(); });
+            if (_gridStop.load()) break;
+            _gridDirty = false;
+            files = _gridGenFiles;
+            cur = _gridGenCurrent;
+        }
+        if (files.empty()) continue;
+        // 当前页优先，再从近到远
+        std::vector<int> order;
+        order.reserve(files.size());
+        order.push_back(cur);
+        for (int d = 1; d < (int)files.size(); d++) {
+            if (cur - d >= 0) order.push_back(cur - d);
+            if (cur + d < (int)files.size()) order.push_back(cur + d);
+        }
+        for (int idx : order) {
+            if (_gridStop.load()) break;
+            bool skip;
+            {
+                std::lock_guard lock(_gridMutex);
+                if (files != _gridGenFiles) { _gridDirty = true; break; }  // 目录变了重启批次
+                skip = (_gridCache.find(idx) != _gridCache.end());
+            }
+            if (skip) continue;
+            CachedImage cached;
+            if (ImageEngine::DecodeForThumbnail(files[idx], cached)) {
+                {
+                    std::lock_guard lock(_gridMutex);
+                    _gridCache[idx] = std::make_shared<CachedImage>(std::move(cached));
+                }
+            }
+            window.Invalidate();  // 渐进填充（InvalidateRect 线程安全）
+        }
+    }
+    CoUninitialize();
+}
+
+// 从网格缓存取缩略图（供 UI 侧边栏绘制用，线程安全）
+std::shared_ptr<CachedImage> WindowContext::GetGridThumb(int i) {
+    std::lock_guard lock(_gridMutex);
+    auto it = _gridCache.find(i);
+    return (it != _gridCache.end()) ? it->second : nullptr;
 }
 
 void WindowContext::RefreshAfterNavigate() {
@@ -90,6 +178,7 @@ void WindowContext::RefreshAfterNavigate() {
                 imageEngine.SrcWidth(), imageEngine.SrcHeight()));
         }
     }
+    UpdateGridGen();  // 侧边栏打开时更新全文件夹缩略图生成基准（当前页优先）
 }
 
 // 点击响应与渲染解耦（qimgv/Honeyview 架构）：
@@ -238,6 +327,7 @@ void WindowContext::SetupHandlers() {
             ui.SetBirdsEyeEnabled(cfg.birdsEyeVisible);
             ui.SetThumbSource(&preDecodeCache, imageEngine.CurrentIndex(),
                               &imageEngine.GetDirFiles());
+            ui.SetGridSource([this](int i) { return GetGridThumb(i); });
             ViewportInfo vp;
             vp.hasImage = imageEngine.HasImage();
             vp.imgW = imageEngine.SrcWidth();
@@ -306,6 +396,12 @@ void WindowContext::SetupHandlers() {
     window.OnMouseWheel([this](int delta, int x, int y, int fwKeys) {
         PerfScope perfWheel(L"消息", "WM_MOUSEWHEEL");  // 性能遥测：滚轮消息耗时
         FlushPendingNavigate();  // 操作前先刷新待处理导航
+        // 侧边栏打开且鼠标在面板上 → 滚动网格，不触发翻页/缩放
+        if (ui.IsGridOpen() && ui.GridPanelHitTest(x, y)) {
+            ui.GridScrollBy(delta);
+            window.Invalidate();
+            return;
+        }
         // 滚轮行为：
         //   鼠标在缩略图条上（条开启时）→ 默认切换图片，Ctrl+滚轮缩放（覆盖 wheelBehavior）
         //   否则由 Config.wheelBehavior 决定，Ctrl+滚轮始终执行另一项：
@@ -328,6 +424,30 @@ void WindowContext::SetupHandlers() {
 
     window.OnMouseDown([this](int x, int y, int) {
         PerfScope perfDown(L"消息", "WM_LBUTTONDOWN");  // 性能遥测：点击消息耗时
+        // 工具栏/标题栏按钮（含网格侧边栏开关）优先响应，不被侧边栏关闭逻辑吞掉
+        int btnCmd = ui.HitTest(x, y);
+        if (ui.IsGridOpen() && btnCmd > 0) {
+            if (btnCmd == IDM_VIEW_NEXT) { RequestNavigate(1);  return; }
+            if (btnCmd == IDM_VIEW_PREV) { RequestNavigate(-1); return; }
+            FlushPendingNavigate();
+            PostMessage(window.Handle(), WM_COMMAND, btnCmd, 0);
+            return;
+        }
+        // 右侧缩略图侧边栏：展开时优先处理（点滚动条拖拽/点缩略图跳转/点面板外关闭）
+        if (ui.IsGridOpen()) {
+            if (ui.GridScrollHitTest(x, y)) { ui.GridScrollDragStart(x, y); return; }
+            int gIdx = ui.GridHitTest(x, y);
+            if (gIdx >= 0) {
+                FlushPendingNavigate();
+                imageEngine.NavigateTo(gIdx);
+                RefreshAfterNavigate();
+                window.Invalidate();
+                return;
+            }
+            if (ui.GridPanelHitTest(x, y)) return;  // 面板空白区不操作
+            if (ui.GridContentBand(x, y)) { ui.CloseGrid(); window.Invalidate(); return; }  // 内容带点击外部关闭
+            // 工具栏/标题栏区域点击 → 落到下方正常处理（按钮仍可点）
+        }
         // "更多"面板：可见时优先处理（点 toggle 切换；点外部关闭，不触发其他操作）
         if (ui.IsMorePanelVisible()) {
             if (ui.MorePanelHitTest(x, y)) {
@@ -397,6 +517,11 @@ void WindowContext::SetupHandlers() {
 
     window.OnMouseMove([this](int x, int y, int) {
         ui.SetMousePos(x, y);  // 全屏渐隐 UI 跟随鼠标位置
+        // 侧边栏：滚动条拖拽 + 缩略图 hover 更新
+        if (ui.IsGridOpen()) {
+            if (ui.IsGridDraggingScroll()) { ui.GridScrollDrag(x, y); window.Invalidate(); return; }
+            if (ui.UpdateGridHover(x, y)) window.Invalidate();
+        }
         if (ui.IsFullscreen()) {
             window.Invalidate();
         } else if ((_dragOutState == DragOutState::Idle || _dragOutState == DragOutState::Returned) && !_draggingBirdsEye && !ui.IsExifDragging()) {
@@ -478,6 +603,7 @@ void WindowContext::SetupHandlers() {
         _oobSince = 0;
         ReleaseCapture();
         _draggingBirdsEye = false; ui.EndExifDrag();
+        ui.GridScrollDragEnd();  // 侧边栏滚动条拖拽结束
         // GIF 面板拖动结束 → 持久化位置到 Config
         if (ui.IsGifDragging()) {
             ui.EndGifPanelDrag();
@@ -625,6 +751,12 @@ void WindowContext::SetupHandlers() {
         case IDM_VIEW_MORE:
             // 底部 ⋮ 弹出"更多"面板（鸟瞰图/缩略图 toggle 开关）
             ui.ToggleMorePanel();
+            window.Invalidate();
+            break;
+        case IDM_VIEW_GRID:
+            // 右侧缩略图侧边栏展开/收起
+            ui.ToggleGrid();
+            if (ui.IsGridOpen()) UpdateGridGen();  // 首次展开触发全文件夹缩略图生成
             window.Invalidate();
             break;
         case IDM_TOGGLE_THUMBBAR: {

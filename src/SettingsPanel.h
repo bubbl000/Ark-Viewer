@@ -47,11 +47,13 @@ private:
     FRect _navR[3], _okR, _allR, _listR;
     FRect _scaleR;              // 界面缩放滑块轨道
     bool  _scaleDragging = false;  // 滑块拖动中
+    FRect _checkerR;            // 棋盘格透明度滑块轨道
+    bool  _checkerDragging = false; // 透明度滑块拖动中
 
     // 元素 ID 编码（hover/click 统一用 ID）
     // 0-2: Tab 导航
     // 10-12: 常规页穿透单选
-    // 20-21: 常规页视图复选
+    // 20-22: 常规页视图复选（20 鸟瞰图 21 缩略图 22 棋盘格）
     // 30-31: 习惯页复选
     // 40-41: 习惯页滚轮单选
     // 50: 全选复选
@@ -61,6 +63,7 @@ private:
 
     // 滑块 x → 缩放值 100-200
     int XToScale(int x) const;
+    int XToOpacity(int x) const;
 
     void Paint();
     void DrawCheck(float x, float y, bool on, bool hover);

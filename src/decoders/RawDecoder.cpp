@@ -422,11 +422,16 @@ std::optional<DecodeResult> RawDecoder::DecodeLevel(const OpenResult& open, int 
     int targetW = (std::max)(1, open.info.width  >> level);
     int targetH = (std::max)(1, open.info.height >> level);
 
-    // 预览层快速路径：目标 ≤ 内嵌缩略图 → 缩略图降采样，跳过全尺寸 demosaic
-    if (!_cachedThumb) _cachedThumb = DecodeThumbnail(open);
-    if (_cachedThumb &&
-        targetW <= _cachedThumb->width && targetH <= _cachedThumb->height) {
-        return _cachedThumb->ScaleDown(targetW, targetH);
+    // 预览层快速路径：仅小预览层(level≥3)复用内嵌缩略图，避开大尺寸 demosaic
+    // 注意：CR3 等相机内嵌 JPEG 预览接近全尺寸，若 level 1-2 也用它，
+    // 其机内颜色处理(照片风格/色调曲线)会与 level 0 的 libraw demosaic 不一致，
+    // 造成等级间明显的颜色跳变。故 level 0-2 统一走 libraw，保证颜色一致。
+    if (level >= 3) {
+        if (!_cachedThumb) _cachedThumb = DecodeThumbnail(open);
+        if (_cachedThumb &&
+            targetW <= _cachedThumb->width && targetH <= _cachedThumb->height) {
+            return _cachedThumb->ScaleDown(targetW, targetH);
+        }
     }
 
     // level 1-2（目标 > 缩略图）：half_size 半尺寸 demosaic 后降采样
@@ -792,6 +797,45 @@ static std::optional<DecodeResult> DecodeHevcThumbnail(const uint8_t* data, size
     return result;
 }
 
+// 按 libraw sizes.flip 把 BGRA 图旋转/镜像到显示方向，与 dcraw_process 输出一致
+// flip：位2=转置(交换宽高)，位1=水平镜像，位0=垂直镜像（顺序同 dcraw flip_image）
+// 相机内嵌缩略图常以传感器原始方向存储（如竖图存为横图），需按同一 flip 校正
+static void ApplyOrientationFlip(DecodeResult& r, int flip) {
+    if (flip == 0) return;
+    if (flip & 4) {  // 转置：交换宽高
+        DecodeResult t;
+        t.width = r.height; t.height = r.width; t.stride = t.width * 4;
+        t.pixels.resize((size_t)t.width * t.height * 4);
+        for (int y = 0; y < r.height; y++)
+            for (int x = 0; x < r.width; x++) {
+                const uint8_t* s = &r.pixels[((size_t)y * r.width + x) * 4];
+                uint8_t* d = &t.pixels[((size_t)x * t.width + y) * 4];
+                d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
+            }
+        r = std::move(t);
+    }
+    if (flip & 2) {  // 水平镜像（左右）
+        int w = r.width, h = r.height;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w / 2; x++) {
+                uint8_t* a = &r.pixels[((size_t)y * w + x) * 4];
+                uint8_t* b = &r.pixels[((size_t)y * w + (w - 1 - x)) * 4];
+                for (int c = 0; c < 4; c++) { uint8_t t = a[c]; a[c] = b[c]; b[c] = t; }
+            }
+    }
+    if (flip & 1) {  // 垂直镜像（上下）
+        int w = r.width, h = r.height;
+        for (int y = 0; y < h / 2; y++) {
+            int y2 = h - 1 - y;
+            for (int x = 0; x < w; x++) {
+                uint8_t* a = &r.pixels[((size_t)y * w + x) * 4];
+                uint8_t* b = &r.pixels[((size_t)y2 * w + x) * 4];
+                for (int c = 0; c < 4; c++) { uint8_t t = a[c]; a[c] = b[c]; b[c] = t; }
+            }
+        }
+    }
+}
+
 // ─── DecodeThumbnail：提取相机内嵌缩略图（避开 demosaic） ───
 // libraw 缩略图类型：type=1 JPEG（多数相机），type=0 PPM bitmap（老相机）
 // JPEG → N 卡 nvJPEG 硬解，失败回退 WIC；PPM → 直接 RGB→BGRA8 转换
@@ -809,6 +853,10 @@ std::optional<DecodeResult> RawDecoder::DecodeThumbnail(const OpenResult& open) 
         g_close(lr);
         return std::nullopt;
     }
+
+    // 读取 EXIF 方向（libraw sizes.flip，对象偏移 0x28，由 _flipdump 扫描确认）。
+    // 偏移错误时 flip 可能为 0（恒等），不影响显示。
+    int flip = *(int*)((char*)lr + 0x28);
 
     // 提取内嵌缩略图（不解 raw 数据，不跑 demosaic）
     if (g_unpack_thumb(lr) != 0) {
@@ -871,6 +919,9 @@ std::optional<DecodeResult> RawDecoder::DecodeThumbnail(const OpenResult& open) 
     g_close(lr);
 
     if (result) {
+        // 方向校正：缩略图以传感器原始方向存储，按 flip 旋转/镜像到显示方向，
+        // 与 DecodeFull/DecodeHalfSize（dcraw_process 已按 EXIF 校正）保持方向一致
+        ApplyOrientationFlip(*result, flip);
         // 诊断：统计缩略图输出亮度（全黑检测——nvJPEG 可能输出黑但误判成功）
         uint64_t sum = 0; size_t npx = 0;
         const auto& px = result->pixels;

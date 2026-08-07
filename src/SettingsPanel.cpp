@@ -199,6 +199,14 @@ int SettingsPanel::XToScale(int x) const {
     return (int)(100 + t * 100 + 0.5f);
 }
 
+// 棋盘格透明度滑块 x → 0~100
+int SettingsPanel::XToOpacity(int x) const {
+    if (_checkerR.w <= 0) return _cfg.checkerboardOpacity;
+    float t = ((float)x - _checkerR.x) / _checkerR.w;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    return (int)(t * 100 + 0.5f);
+}
+
 // ─── 主绘制 ───
 
 void SettingsPanel::Paint() {
@@ -246,6 +254,31 @@ void SettingsPanel::Paint() {
             DrawTextVCenter(viewOpts[i], cx + S(44), y, cw - S(60), rowH, Cf(0xCC, 0xCC, 0xCC), _font.Get());
             y += rowH;
         }
+        // ── 背景设置 ──
+        y += S(10);
+        DrawSection(cx + S(16), y, cw - S(32), L"背景设置"); y += S(36);
+        DrawCheck(cx + S(20), y + S(7), _cfg.checkerboard, _hoverId == 22);
+        DrawTextVCenter(L"棋盘格（图片透明部分显示棋盘格）", cx + S(44), y, cw - S(60), rowH,
+            Cf(0xCC, 0xCC, 0xCC), _font.Get());
+        y += rowH;
+        // 棋盘格透明度滑块（0~100%），布局与界面缩放滑块一致
+        std::wstring opText = std::to_wstring(_cfg.checkerboardOpacity) + L"%";
+        DrawTextVCenter(opText.c_str(), cx + S(44), y, S(50), rowH,
+            Cf(0xFF, 0xFF, 0xFF), _font.Get());
+        float ckX = cx + S(120), ckW = cw - S(120) - S(60);
+        float ckY = y + S(14);
+        _checkerR = { ckX, ckY - S(6), ckW, S(12.0f) };
+        _r.FillRoundedRectangle(ckX, ckY, ckW, S(4), S(2), S(2), Cf(0x44, 0x44, 0x44));
+        float ckFill = ckW * _cfg.checkerboardOpacity / 100.0f;
+        if (ckFill > 0)
+            _r.FillRoundedRectangle(ckX, ckY, ckFill, S(4), S(2), S(2), Cf(0x90, 0xC2, 0x08));
+        float ckKnobX = ckX + ckFill, ckKnobY = ckY + S(2);
+        _r.FillCircle(ckKnobX, ckKnobY, S(7),
+            _hoverId == 61 ? Cf(0x7A, 0xAD, 0x06) : Cf(0x90, 0xC2, 0x08));
+        _r.FillCircle(ckKnobX, ckKnobY, S(3), Cf(0x1E, 0x1E, 0x1E));
+        DrawTextVCenter(L"棋盘格透明度", cx + S(16), y + rowH + S(2), cw - S(32), S(18),
+            Cf(0x88, 0x88, 0x88), _smallFont.Get());
+        y += S(36);
         // ── 界面缩放滑块（100~200%，手动覆盖 DPI 自动缩放）──
         y += S(10);
         DrawSection(cx + S(16), y, cw - S(32), L"界面缩放"); y += S(36);
@@ -387,10 +420,15 @@ int SettingsPanel::HitTest(int x, int y) {
                 float ry = yBase + i * rowH;
                 if (y >= ry && y < ry + rowH) return 20 + i;
             }
+            yBase = S(16) + S(36) + 3 * rowH + S(10) + S(36) + 2 * rowH + S(10) + S(36);  // 背景复选起始 y
+            if (y >= yBase && y < yBase + rowH) return 22;
         }
         // 滑块热区（轨道上下扩展 10px 便于点击）
         if (x >= _scaleR.x - S(6) && x < _scaleR.x + _scaleR.w + S(6) &&
             y >= _scaleR.y - S(10) && y < _scaleR.y + _scaleR.h + S(10)) return 60;
+        // 棋盘格透明度滑块热区
+        if (x >= _checkerR.x - S(6) && x < _checkerR.x + _checkerR.w + S(6) &&
+            y >= _checkerR.y - S(10) && y < _checkerR.y + _checkerR.h + S(10)) return 61;
     } else if (_tab == 1) {
         // 习惯页：复选 30-31，单选 40-41
         if (inContentX) {
@@ -429,12 +467,20 @@ void SettingsPanel::LDown(int x, int y) {
         return;
     }
 
+    if (id == 61) {  // 棋盘格透明度滑块：按下即跳位并开始拖动
+        _checkerDragging = true;
+        int v = XToOpacity(x);
+        if (v != _cfg.checkerboardOpacity) { _cfg.checkerboardOpacity = v; InvalidateRect(_hwnd, nullptr, FALSE); }
+        return;
+    }
+
     if (id >= 0 && id <= 2) { _tab = id; _hoverId = -1; InvalidateRect(_hwnd, nullptr, FALSE); return; }
 
     if (id >= 10 && id <= 12) { _cfg.folderNavPolicy = id - 10; InvalidateRect(_hwnd, nullptr, FALSE); return; }
-    if (id >= 20 && id <= 21) {
+    if (id >= 20 && id <= 22) {
         if (id == 20) _cfg.birdsEyeVisible = !_cfg.birdsEyeVisible;
-        else           _cfg.thumbnailBarVisible = !_cfg.thumbnailBarVisible;
+        else if (id == 21) _cfg.thumbnailBarVisible = !_cfg.thumbnailBarVisible;
+        else _cfg.checkerboard = !_cfg.checkerboard;
         InvalidateRect(_hwnd, nullptr, FALSE); return;
     }
     if (id >= 30 && id <= 31) {
@@ -457,6 +503,7 @@ void SettingsPanel::LDown(int x, int y) {
 }
 
 void SettingsPanel::LUp(int x, int y) {
+    if (_checkerDragging) { _checkerDragging = false; return; }
     if (_scaleDragging) { _scaleDragging = false; return; }
     if (_pressedOk) {
         _pressedOk = false;
@@ -468,6 +515,11 @@ void SettingsPanel::LUp(int x, int y) {
 }
 
 void SettingsPanel::Move(int x, int y) {
+    if (_checkerDragging) {
+        int v = XToOpacity(x);
+        if (v != _cfg.checkerboardOpacity) { _cfg.checkerboardOpacity = v; InvalidateRect(_hwnd, nullptr, FALSE); }
+        return;
+    }
     if (_scaleDragging) {
         int v = XToScale(x);
         if (v != _cfg.uiScale) { _cfg.uiScale = v; InvalidateRect(_hwnd, nullptr, FALSE); }

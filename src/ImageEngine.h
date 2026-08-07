@@ -145,6 +145,11 @@ public:
     // ── 回调 ──
     std::function<void(const std::wstring&)> OnStatusChanged;
 
+    // 静态解码回调（公开）：供侧边栏全文件夹缩略图生成线程调用，创建独立 FileMapping + decoder
+    static bool DecodeForCache(const std::wstring& path, CachedImage& out);
+    // 静态缩略图解码回调：供底部条/侧边栏共享缩略图生成线程调用，输出最终 80×110 等比小图（内存小）
+    static bool DecodeForThumbnail(const std::wstring& path, CachedImage& out);
+
 private:
     D2DRenderer* _renderer = nullptr;
 
@@ -384,8 +389,6 @@ private:
     // ── 预解码缓存 ──
     bool LoadFromCache(const std::wstring& path, int newIndex);
     void TriggerPreDecode(int fwd, int bwd);
-    // 静态解码回调：工作线程执行，创建独立 FileMapping + decoder
-    static bool DecodeForCache(const std::wstring& path, CachedImage& out);
 
     // ── 已解码图片缓存 ──
     void StoreDecodedCache();   // Unload 前保存当前 _sourceBitmap 到缓存

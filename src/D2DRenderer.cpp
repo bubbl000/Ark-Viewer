@@ -288,6 +288,17 @@ void D2DRenderer::FillCircle(float cx, float cy, float r, D2D1_COLOR_F c) {
     if (b) _d2dContext->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), r, r), b);
 }
 
+void D2DRenderer::PushClip(float x, float y, float w, float h) {
+    if (_d2dContext) {
+        D2D1_RECT_F rc = D2D1::RectF(x, y, x + w, y + h);
+        _d2dContext->PushAxisAlignedClip(&rc, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    }
+}
+
+void D2DRenderer::PopClip() {
+    if (_d2dContext) _d2dContext->PopAxisAlignedClip();
+}
+
 void D2DRenderer::DrawText(const wchar_t* text, size_t len,
     IDWriteTextFormat* format, float x, float y, float w, float h, D2D1_COLOR_F c)
 {
@@ -447,6 +458,40 @@ ID2D1SolidColorBrush* D2DRenderer::GetCachedBrush(D2D1_COLOR_F color) {
         _lastBrushColor = color;
     }
     return _brushCache.Get();
+}
+
+void D2DRenderer::DrawCheckerboard(float x, float y, float w, float h, float cell, float alpha) {
+    if (!_d2dContext || w <= 0 || h <= 0) return;
+    if (alpha < 0.0f) alpha = 0.0f; else if (alpha > 1.0f) alpha = 1.0f;
+    // 懒创建 2x2 棋盘格位图 + 平铺刷（跨帧复用）；透明度变化时重建（把 alpha 烘焙进像素）
+    if (!_checkerBrush || alpha != _checkerAlpha) {
+        _checkerBitmap.Reset();
+        _checkerBrush.Reset();
+        int sz = (int)(cell * 2);
+        if (sz < 2) sz = 2;
+        // BGRA8 premultiplied：亮 #FFFFFF + 暗 #C0C0C0，RGB 预乘 alpha（棋盘格透明度）
+        std::vector<uint8_t> px((size_t)sz * sz * 4);
+        float af = alpha;
+        for (int yy = 0; yy < sz; yy++) {
+            for (int xx = 0; xx < sz; xx++) {
+                bool dark = ((xx < (int)cell) ^ (yy < (int)cell));
+                size_t ci = (size_t)(yy * sz + xx) * 4;
+                float v = dark ? 192.0f : 255.0f;
+                px[ci] = px[ci+1] = px[ci+2] = (uint8_t)(v * af + 0.5f);  // 预乘 alpha
+                px[ci + 3] = (uint8_t)(255.0f * af + 0.5f);
+            }
+        }
+        _checkerAlpha = alpha;
+        _checkerBitmap = CreateBitmap(sz, sz, px.data(), sz * 4);
+        if (_checkerBitmap) {
+            _d2dContext->CreateBitmapBrush(_checkerBitmap.Get(),
+                D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_WRAP, D2D1_EXTEND_MODE_WRAP,
+                                            D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR),
+                &_checkerBrush);
+        }
+    }
+    if (!_checkerBrush) return;
+    _d2dContext->FillRectangle(D2D1::RectF(x, y, x + w, y + h), _checkerBrush.Get());
 }
 
 ComPtr<ID2D1Effect> D2DRenderer::CreateIccEffect(const uint8_t* iccData, size_t iccLen) {

@@ -43,3 +43,4 @@
 #define IDM_GIF_PREV                    40036  // GIF 上一帧
 #define IDM_GIF_NEXT                    40037  // GIF 下一帧
 #define IDM_GIF_PLAYPAUSE               40038  // GIF 播放/暂停
+#define IDM_VIEW_GRID                   40039  // 右侧缩略图侧边栏开关

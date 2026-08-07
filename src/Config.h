@@ -18,6 +18,8 @@ struct AppConfig {
     int  gifPanelY = -1;
     // 界面缩放（%）：100=默认（跟随系统 DPI），100~200 手动放大 UI/字号
     int  uiScale = 100;
+    bool checkerboard = false;        // 透明图片背景显示棋盘格（默认不勾选）
+    int  checkerboardOpacity = 100;   // 棋盘格透明度 0~100（默认不透明）
 };
 
 class Config {

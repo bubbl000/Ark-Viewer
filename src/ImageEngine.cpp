@@ -3,7 +3,9 @@
 #include "PreDecodeCache.h"
 #include "ActivityLog.h"
 #include "Logger.h"
+#include "Config.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <Shlwapi.h>
@@ -440,6 +442,10 @@ void ImageEngine::RenderFrame() {
 
     // 优先绘制 _sourceBitmap（高清），否则用 _blurBitmap 模糊占位
     if (_sourceBitmap) {
+        // 棋盘格背景：开启设置时在图片区域先铺棋盘格，图片绘制其上，透明处露出棋盘格
+        if (Config::Instance().Get().checkerboard)
+            _renderer->DrawCheckerboard(x, y, w, h, 8.0f,
+                Config::Instance().Get().checkerboardOpacity / 100.0f);
         if (hasTransform) {
             _renderer->DrawBitmapRotated(_sourceBitmap.Get(), x, y, w, h,
                 _rotation, _flipH, _flipV);
@@ -1771,6 +1777,55 @@ bool ImageEngine::DecodeForCache(const std::wstring& path, CachedImage& out) {
     out.topLevel = 0;
     out.levelCount = 1;
     out.supportsTiling = false;
+    return true;
+}
+
+// 盒式平均降采样：把 BGRA 图像缩到 targetW×targetH（等比≤80×110，避免最近邻锯齿）
+// 用于缩略图生成：解码大图→一次缩到最终显示尺寸，内存小且画质平滑
+static void BoxAverageShrink(const uint8_t* src, int sw, int sh, int stride,
+                             std::vector<uint8_t>& dst, int dw, int dh) {
+    dst.resize((size_t)dw * dh * 4);
+    for (int y = 0; y < dh; y++) {
+        int y0 = (int)((int64_t)y * sh / dh), y1 = (int)((int64_t)(y + 1) * sh / dh);
+        if (y1 <= y0) y1 = y0 + 1;
+        for (int x = 0; x < dw; x++) {
+            int x0 = (int)((int64_t)x * sw / dw), x1 = (int)((int64_t)(x + 1) * sw / dw);
+            if (x1 <= x0) x1 = x0 + 1;
+            int b = 0, g = 0, r = 0, a = 0, n = 0;
+            for (int sy = y0; sy < y1; sy++) {
+                const uint8_t* p = src + (size_t)sy * stride + (size_t)x0 * 4;
+                for (int sx = x0; sx < x1; sx++, p += 4) {
+                    b += p[0]; g += p[1]; r += p[2]; a += p[3]; n++;
+                }
+            }
+            uint8_t* q = dst.data() + ((size_t)y * dw + x) * 4;
+            q[0] = (uint8_t)(b / n); q[1] = (uint8_t)(g / n);
+            q[2] = (uint8_t)(r / n); q[3] = (uint8_t)(a / n);
+        }
+    }
+}
+
+// 静态缩略图解码回调：底部条/侧边栏共享，解码后一步缩到 80×110 等比小图
+// 复用 DecodeForCache 的解码源（内嵌缩略图优先，回退顶层/全量），仅最终尺寸缩小
+bool ImageEngine::DecodeForThumbnail(const std::wstring& path, CachedImage& out) {
+    CachedImage full;
+    if (!DecodeForCache(path, full)) return false;
+    if (!full.pixels || full.pixels->empty() || full.width <= 0 || full.height <= 0) return false;
+
+    // 等比 ≤ 80×110 框（避免上采样）
+    constexpr int kThumbW = 80, kThumbH = 110;
+    float s = std::min((float)kThumbW / full.width, (float)kThumbH / full.height);
+    if (s >= 1.0f) {  // 源已足够小：直接复用
+        out = std::move(full);
+        return true;
+    }
+    int tw = (std::max)(1, (int)std::lround(full.width * s));
+    int th = (std::max)(1, (int)std::lround(full.height * s));
+    std::vector<uint8_t> thumb;
+    BoxAverageShrink(full.pixels->data(), full.width, full.height, full.stride, thumb, tw, th);
+    out = std::move(full);  // 保留 origWidth/topLevel 等元数据
+    out.width = tw; out.height = th; out.stride = tw * 4;
+    out.pixels = std::make_shared<std::vector<uint8_t>>(std::move(thumb));
     return true;
 }
 

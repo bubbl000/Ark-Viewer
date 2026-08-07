@@ -4,6 +4,7 @@
 #include <dwrite.h>
 #include <string>
 #include <vector>
+#include <memory>
 #include <functional>
 #include <unordered_map>
 #include <wrl/client.h>
@@ -15,6 +16,7 @@
 
 class D2DRenderer;
 class PreDecodeCache;
+struct CachedImage;
 
 using Microsoft::WRL::ComPtr;
 
@@ -137,10 +139,33 @@ public:
     void SetThumbSource(PreDecodeCache* cache, int current, const std::vector<std::wstring>* files) {
         _thumbCache = cache; _thumbCurrent = current; _thumbFiles = files;
     }
+    // 侧边栏网格数据源：WindowManager 提供全文件夹缩略图缓存取回函数（优先于 PreDecodeCache）
+    void SetGridSource(std::function<std::shared_ptr<CachedImage>(int)> getter) { _gridGet = std::move(getter); }
     // 点击命中：返回索引，-1=未命中（仅 alpha>0.3 时响应）
     int ThumbBarHitTest(int x, int y);
     // 目录变化时清空纹理缓存（索引失效）
     void ClearThumbTextures();
+
+    // ── 右侧缩略图侧边栏（网格总览，仿 Ark Comic 全页缩略图侧边栏） ──
+    void ToggleGrid() { _gridOpen = !_gridOpen; }
+    bool IsGridOpen() const { return _gridOpen; }
+    void CloseGrid() { _gridOpen = false; }
+    // 命中测试：返回缩略图索引，-1=未命中
+    int  GridHitTest(int x, int y) const;
+    // 是否在侧边栏面板区域内（含空白区）
+    bool GridPanelHitTest(int x, int y) const;
+    // 命中滚动条（返回 true 则开始拖拽）
+    bool GridScrollHitTest(int x, int y) const;
+    bool IsGridDraggingScroll() const { return _gridDragScroll; }
+    void GridScrollDragStart(int x, int y);
+    void GridScrollDrag(int x, int y);
+    void GridScrollDragEnd() { _gridDragScroll = false; }
+    // 滚轮滚动（delta>0 上滚一行）
+    void GridScrollBy(int delta);
+    // 更新 hover 索引，返回是否变化（供调用方决定是否重绘）
+    bool UpdateGridHover(int x, int y);
+    // 是否在内容带（标题栏之下、工具栏之上），用于点击面板外部关闭侧边栏
+    bool GridContentBand(int x, int y) const;
 
     // ── 鸟瞰图 ──
     void SetBirdsEyeEnabled(bool e) { _birdsEyeEnabled = e; }
@@ -196,8 +221,25 @@ private:
     PreDecodeCache* _thumbCache = nullptr;  // 顶层缩略图数据源
     int _thumbCurrent = -1;                  // 当前图片索引
     const std::vector<std::wstring>* _thumbFiles = nullptr;
+    // 侧边栏网格数据源：全文件夹缩略图缓存取回（WindowManager 注入，优先于 _thumbCache）
+    std::function<std::shared_ptr<CachedImage>(int)> _gridGet;
     // GPU 纹理缓存：索引→已上传纹理（懒创建，超出可视范围淘汰）
     std::unordered_map<int, ComPtr<ID2D1Bitmap1>> _thumbTextures;
+
+    // ── 右侧缩略图侧边栏状态 ──
+    bool _gridOpen = false;              // 侧边栏展开
+    int  _gridScroll = 0;                // 垂直滚动偏移（逻辑像素）
+    float _gridMaxScroll = 0;            // 最大滚动量
+    int  _gridHover = -1;                // 悬停缩略图索引
+    std::vector<RECT> _gridRects;        // 每格矩形
+    RECT _gridPanelRect = {};            // 侧边栏面板区域
+    RECT _gridTrack = {}, _gridSlider = {};  // 滚动条轨道/滑块
+    bool _gridDragScroll = false;        // 正在拖拽滚动条
+    int  _gridScrollStart = 0;           // 拖拽起始滚动量
+    int  _gridDragY = 0;                 // 拖拽起始鼠标 y
+    // 网格缩略图 GPU 纹理缓存（独立于缩略图条，避免互相淘汰）
+    std::unordered_map<int, ComPtr<ID2D1Bitmap1>> _gridTextures;
+    int _winW = 0, _winH = 0;            // 窗口尺寸（Draw 时记录，供内容带判断用）
 
     // ── 鸟瞰图状态 ──
     bool _birdsEyeEnabled = false;
@@ -262,6 +304,11 @@ private:
     void DrawExifPanel(D2DRenderer& r);
     // 缩略图条（底部，固定框模式 + 智能隐藏，复用 PreDecodeCache 顶层缩略图）
     void DrawThumbBar(D2DRenderer& r);
+    // 右侧缩略图侧边栏（网格总览）
+    void DrawGridPanel(D2DRenderer& r);
+    void LayoutGrid(int winW, int winH);
+    // 工具栏网格按钮图标（等大四象限）
+    void DrawGridIcon(D2DRenderer& r, const RECT& rc, D2D1_COLOR_F col);
     // 鸟瞰图（右下角，图片超出视口时显示，蓝框拖动平移主图）
     void DrawBirdsEye(D2DRenderer& r);
     // "更多"浮动面板（⋮ 上方弹出，含鸟瞰图/缩略图 toggle 开关）

@@ -9,6 +9,10 @@
 #include <vector>
 #include <atomic>
 #include <string>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <unordered_map>
 #include <chrono>
 
 // ─── 单窗口上下文 ───
@@ -30,6 +34,8 @@ public:
     bool Create(int cmdShow, const std::wstring& path);
     // 加载图片到当前窗口（替换内容）
     void LoadPath(const std::wstring& path);
+    // 销毁：停止并回收侧边栏缩略图生成线程
+    ~WindowContext();
 
 private:
     void SetupHandlers();
@@ -40,6 +46,11 @@ private:
     void RequestNavigate(int dir);
     // 同步消费 _targetIndex：缩放/拖拽前确保索引已切换到最新目标
     void FlushPendingNavigate();
+
+    // ── 侧边栏全文件夹缩略图生成 ──
+    void UpdateGridGen();                             // 触发/更新生成（主线程）
+    void GridGenLoop();                               // 后台线程：顺序生成全部缩略图
+    std::shared_ptr<CachedImage> GetGridThumb(int i); // 从网格缓存取缩略图
 
     // ── 新增操作功能 ──
     void ToggleFullscreen();                // 全屏切换（F11 / 工具栏按钮）
@@ -77,6 +88,16 @@ private:
     int  _lastX = 0, _lastY = 0;
     int  _targetIndex = -1;                 // 导航目标索引（-1=无待处理导航），点击只改此值
     int  _lastHoverKey = -1;                // 上次 hover 命中键（按钮cmd/缩略图idx+偏移），变化时重绘
+
+    // ── 侧边栏全文件夹缩略图生成状态 ──
+    std::mutex _gridMutex;                                 // 保护 _gridCache/_gridGenFiles
+    std::condition_variable _gridCv;                       // 唤醒生成线程
+    std::unordered_map<int, std::shared_ptr<CachedImage>> _gridCache;  // 全文件夹缩略图缓存
+    std::vector<std::wstring> _gridGenFiles;               // 已生成目录文件列表（变化则清缓存）
+    int  _gridGenCurrent = -1;                             // 生成基准索引（当前页）
+    std::thread _gridThread;                               // 后台生成线程
+    std::atomic<bool> _gridStop{false};                    // 停止标志
+    std::atomic<bool> _gridDirty{false};                   // 有待生成任务
 };
 
 // ─── 窗口管理器（单例） ───
